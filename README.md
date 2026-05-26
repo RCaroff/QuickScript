@@ -161,3 +161,4 @@ Tous sont lancés via `/usr/bin/env`, donc tout interpréteur trouvable dans le 
 - Mémorisation des dernières valeurs de paramètres
 - Variante PTY (pseudo-terminal) pour les scripts qui n'aiment pas tourner hors TTY
 # QuickScript
+# QuickScript
