@@ -26,6 +26,10 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>QuickScript demande au Finder le dossier en cours d'affichage pour y exécuter un script via le menu contextuel.</string>
     <key>NSServices</key>

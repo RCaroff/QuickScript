@@ -513,12 +513,15 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
     }
 
     @objc private func revealLogInFinder() {
-        // 1) le fichier .log du dernier lancement, si dispo
-        if let url = logFileURL, FileManager.default.fileExists(atPath: url.path) {
+        // 1) le fichier actuellement affiché (sélection du popup d'historique
+        // ou run en cours)
+        // 2) le run en cours si rien n'a encore été affiché
+        // 3) fallback : le dossier du script
+        let target = displayedURL ?? logFileURL
+        if let url = target, FileManager.default.fileExists(atPath: url.path) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
             return
         }
-        // 2) fallback : le dossier du script
         NSWorkspace.shared.activateFileViewerSelecting([scriptLogsDirectory])
     }
 
@@ -646,6 +649,14 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
     func show() {
         isShown = true
         refreshHistory(highlighting: displayedURL ?? logFileURL)
+
+        // À la première ouverture (rien encore affiché), précharge le fichier
+        // de log le plus récent s'il existe. À une réouverture (après hide),
+        // displayedURL est déjà set → on préserve la sélection précédente.
+        if displayedURL == nil, let mostRecent = historyFiles.first {
+            loadFile(mostRecent)
+        }
+
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         onVisibilityChanged?()

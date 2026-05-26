@@ -17,6 +17,10 @@ QuickScript/
 ├── build.sh            ← compile main.swift en .app bundle, install dans ~/Applications
 ├── README.md           ← documentation utilisateur
 ├── CLAUDE.md           ← ce fichier
+├── icon/               ← icône macOS
+│   ├── icon.svg            ← source vectorielle (modifiable)
+│   ├── preview.png         ← aperçu 512px
+│   └── AppIcon.iconset/    ← 10 PNGs (16→1024) compilés en .icns par iconutil
 ├── test-scripts/       ← scripts bash d'exemple pour tester chaque feature
 │   ├── new-file.sh, new-file-here.sh, files-info.sh,
 │   ├── interactive-prompt.sh, error-demo.sh, silent-ok.sh,
@@ -24,6 +28,23 @@ QuickScript/
 └── build/              ← output du build (généré, gitignorable)
     └── QuickScript.app
 ```
+
+## Icône
+
+Source : `icon/icon.svg` (squircle violet + lightning bolt jaune-orange).
+
+`build.sh` appelle `iconutil -c icns icon/AppIcon.iconset -o .../AppIcon.icns` à
+chaque build. Si l'iconset n'existe pas ou si `iconutil` n'est pas trouvé,
+le build continue avec l'icône système générique.
+
+Pour modifier le design : éditer `icon.svg`, puis régénérer les PNGs avec
+`sips` (macOS) ou `convert` (ImageMagick / Linux dev) aux 10 tailles requises
+(`16x16`, `16x16@2x`, `32x32`, `32x32@2x`, `128x128`, `128x128@2x`, `256x256`,
+`256x256@2x`, `512x512`, `512x512@2x`). Voir README.md pour le snippet exact.
+
+L'icône de la status bar reste le caractère ⚡ via
+`statusItem.button.title = "⚡"` — c'est volontairement distinct (NSImage
+plus difficile à équilibrer aux tailles de la menu bar).
 
 Pas de Xcode project. La compilation passe par `swiftc` direct dans `build.sh`, qui crée ensuite manuellement le bundle `.app`.
 

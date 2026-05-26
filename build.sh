@@ -40,6 +40,14 @@ swiftc -O \
 # Info.plist
 cp Info.plist "${APP_BUNDLE}/Contents/Info.plist"
 
+# Icône : iconutil (macOS-only, fourni avec les Command Line Tools) compile
+# l'iconset en .icns. Si l'iconset n'existe pas, on saute silencieusement —
+# l'app sera fonctionnelle mais avec l'icône générique macOS.
+if [ -d "icon/AppIcon.iconset" ] && command -v iconutil >/dev/null 2>&1; then
+    echo "▸ Génération de AppIcon.icns…"
+    iconutil -c icns icon/AppIcon.iconset -o "${RESOURCES_DIR}/AppIcon.icns"
+fi
+
 # Signature ad-hoc pour éviter le quarantine sur certaines configs
 echo "▸ Signature ad-hoc…"
 codesign --force --sign - "$APP_BUNDLE" 2>/dev/null || true
