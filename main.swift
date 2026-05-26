@@ -282,18 +282,60 @@ enum QSLog {
 /// Fenêtre persistante affichant les logs d'un script en temps réel.
 /// Une instance par script, gérée par AppDelegate. La fenêtre persiste entre
 /// les lancements (montrée/cachée à la demande via "Show/Hide logs window").
-final class LogWindowController: NSWindowController, NSWindowDelegate {
+final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDelegate {
 
     private let textView: NSTextView
     private let monoFont: NSFont
     private let revealButton: NSButton
+    private let findButton: NSButton
+    private let historyPopup: NSPopUpButton
     private let scriptLogsDirectory: URL
 
     /// URL du dernier lancement actif. Mis à jour à chaque attachToRun.
     private var logFileURL: URL?
 
+    /// URL du fichier dont le contenu est actuellement affiché dans la textView.
+    /// Distinct de `logFileURL` quand l'utilisateur visionne un log passé via
+    /// le popup. Sert à conserver le bon item coché dans le menu.
+    private var displayedURL: URL?
+
+    /// Liste des fichiers .log présents dans `scriptLogsDirectory`, triés du
+    /// plus récent au plus ancien. Aligné avec les items du popup.
+    private var historyFiles: [URL] = []
+
+    /// True = les chunks reçus via `append(_:)` sont ajoutés au texte affiché.
+    /// False = le texte affiché est figé sur un fichier passé (loadFile).
+    /// Reset à true à chaque `attachToRun(_:)`.
+    private var liveMode: Bool = true
+
     /// Notifié quand la visibilité de la fenêtre change (show/hide/close).
     var onVisibilityChanged: (() -> Void)?
+
+    // MARK: Date formatters
+
+    /// Format du suffixe de nom de fichier : "yyyy-MM-dd_HHmmss".
+    private static let filenameDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd_HHmmss"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    /// Format affiché dans le popup : "le 25/05/2026 à 14:30:45".
+    private static let displayDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "'le' dd/MM/yyyy 'à' HH:mm:ss"
+        f.locale = Locale(identifier: "fr_FR")
+        return f
+    }()
+
+    /// Extrait la date depuis le nom de fichier (suffixe "yyyy-MM-dd_HHmmss").
+    private static func parseDate(from url: URL) -> Date? {
+        let name = url.deletingPathExtension().lastPathComponent
+        guard name.count >= 17 else { return nil }
+        let suffix = String(name.suffix(17))
+        return filenameDateFormatter.date(from: suffix)
+    }
 
     init(scriptName: String, scriptLogsDirectory: URL) {
         self.scriptLogsDirectory = scriptLogsDirectory
@@ -318,7 +360,7 @@ final class LogWindowController: NSWindowController, NSWindowDelegate {
                               target: nil,
                               action: #selector(revealLogInFinder))
         reveal.bezelStyle = .rounded
-        reveal.image = NSImage(systemSymbolName: "magnifyingglass",
+        reveal.image = NSImage(systemSymbolName: "folder",
                                accessibilityDescription: nil)
         reveal.imagePosition = .imageLeading
         reveal.sizeToFit()
@@ -328,6 +370,38 @@ final class LogWindowController: NSWindowController, NSWindowDelegate {
         reveal.frame = bf
         toolbar.addSubview(reveal)
         self.revealButton = reveal
+
+        let find = NSButton(title: "Rechercher",
+                            target: nil,
+                            action: #selector(showFindBar))
+        find.bezelStyle = .rounded
+        find.image = NSImage(systemSymbolName: "magnifyingglass",
+                             accessibilityDescription: nil)
+        find.imagePosition = .imageLeading
+        find.sizeToFit()
+        var fbf = find.frame
+        fbf.origin.x = reveal.frame.maxX + 8
+        fbf.origin.y = (toolbarHeight - fbf.size.height) / 2
+        find.frame = fbf
+        toolbar.addSubview(find)
+        self.findButton = find
+
+        // Popup d'historique des logs, ancré à droite de la toolbar.
+        let popupWidth: CGFloat = 240
+        let popupHeight: CGFloat = 26
+        let popup = NSPopUpButton(
+            frame: NSRect(x: totalWidth - popupWidth - 12,
+                          y: (toolbarHeight - popupHeight) / 2,
+                          width: popupWidth,
+                          height: popupHeight),
+            pullsDown: false
+        )
+        popup.autoresizingMask = [.minXMargin]
+        popup.target = nil
+        popup.action = #selector(historySelected(_:))
+        popup.toolTip = "Historique des lancements de ce script"
+        toolbar.addSubview(popup)
+        self.historyPopup = popup
 
         // Séparateur
         let sep = NSBox(frame: NSRect(x: 0,
@@ -363,6 +437,9 @@ final class LogWindowController: NSWindowController, NSWindowDelegate {
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false
         tv.backgroundColor = NSColor.textBackgroundColor
+        // Active la find bar intégrée (Cmd+F, Cmd+G, Cmd+Shift+G).
+        tv.usesFindBar = true
+        tv.isIncrementalSearchingEnabled = true
         self.textView = tv
         scroll.documentView = tv
 
@@ -384,19 +461,41 @@ final class LogWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         reveal.target = self
+        find.target = self
+        popup.target = self
+        popup.menu?.delegate = self
         // Toujours actif : à défaut d'URL spécifique, on révèle le dossier
         // des logs du script.
         reveal.isEnabled = true
+
+        // Première population du popup avec ce qui existe déjà sur disque.
+        refreshHistory()
+    }
+
+    @objc private func showFindBar() {
+        // S'assurer que le NSTextView est first responder pour que la find bar
+        // de son NSScrollView s'affiche correctement.
+        window?.makeFirstResponder(textView)
+        let dummy = NSMenuItem()
+        dummy.tag = NSTextFinder.Action.showFindInterface.rawValue
+        textView.performTextFinderAction(dummy)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
     /// Lie cette fenêtre au lancement courant. Met à jour l'URL exposée pour
-    /// le bouton « Afficher dans le Finder » et le command-clic sur le titre.
+    /// le bouton « Afficher dans le Finder », repasse en mode live, vide la
+    /// vue (le runner va ré-écrire les chunks au fur et à mesure) et rafraîchit
+    /// le popup d'historique avec la nouvelle entrée en tête.
     func attachToRun(logFileURL: URL) {
         self.logFileURL = logFileURL
         DispatchQueue.main.async { [weak self] in
-            self?.window?.representedURL = logFileURL
+            guard let self = self else { return }
+            self.liveMode = true
+            self.displayedURL = logFileURL
+            self.window?.representedURL = logFileURL
+            self.textView.string = ""
+            self.refreshHistory(highlighting: logFileURL)
         }
     }
 
@@ -410,10 +509,12 @@ final class LogWindowController: NSWindowController, NSWindowDelegate {
         NSWorkspace.shared.activateFileViewerSelecting([scriptLogsDirectory])
     }
 
-    /// Append du texte dans le NSTextView. Thread-safe.
+    /// Append du texte dans le NSTextView. Thread-safe. Ignoré si on est en
+    /// mode "viewing" (un fichier passé est affiché via le popup).
     func append(_ text: String) {
         DispatchQueue.main.async { [weak self] in
-            guard let self = self, let storage = self.textView.textStorage else { return }
+            guard let self = self, self.liveMode,
+                  let storage = self.textView.textStorage else { return }
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: self.monoFont,
                 .foregroundColor: NSColor.labelColor,
@@ -425,7 +526,8 @@ final class LogWindowController: NSWindowController, NSWindowDelegate {
 
     func appendInfoLine(_ text: String) {
         DispatchQueue.main.async { [weak self] in
-            guard let self = self, let storage = self.textView.textStorage else { return }
+            guard let self = self, self.liveMode,
+                  let storage = self.textView.textStorage else { return }
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: self.monoFont,
                 .foregroundColor: NSColor.secondaryLabelColor,
@@ -435,12 +537,102 @@ final class LogWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    // MARK: Historique des logs (popup)
+
+    @objc private func historySelected(_ sender: NSPopUpButton) {
+        let idx = sender.indexOfSelectedItem
+        guard idx >= 0, idx < historyFiles.count else { return }
+        loadFile(historyFiles[idx])
+    }
+
+    /// Charge un fichier .log dans le NSTextView. Si l'URL correspond au
+    /// lancement courant (`self.logFileURL`), on repasse en mode live ;
+    /// sinon, on est en "viewing mode" et les nouveaux chunks sont ignorés.
+    private func loadFile(_ url: URL) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let storage = self.textView.textStorage else { return }
+
+            let isCurrent = (url == self.logFileURL)
+
+            let content: String
+            if let data = try? Data(contentsOf: url),
+               let s = String(data: data, encoding: .utf8) {
+                content = s
+            } else {
+                content = "(impossible de lire le fichier)\n\(url.path)"
+            }
+
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: self.monoFont,
+                .foregroundColor: NSColor.labelColor,
+            ]
+            storage.setAttributedString(NSAttributedString(string: content, attributes: attrs))
+            self.textView.scrollToEndOfDocument(nil)
+
+            self.displayedURL = url
+            // Bascule le mode live APRÈS avoir rempli la vue, pour que les
+            // chunks éventuels en file d'attente sur main.async ne s'ajoutent
+            // pas par dessus le snapshot qui les contient déjà.
+            self.liveMode = isCurrent
+        }
+    }
+
+    /// Rafraîchit la liste des fichiers .log du dossier du script et
+    /// repopule le popup. Si `highlighting` est non nil et présent, le
+    /// sélectionne.
+    func refreshHistory(highlighting: URL? = nil) {
+        let fm = FileManager.default
+        var entries: [(URL, Date)] = []
+        if let urls = try? fm.contentsOfDirectory(at: scriptLogsDirectory,
+                                                  includingPropertiesForKeys: nil) {
+            entries = urls
+                .filter { $0.pathExtension == "log" }
+                .compactMap { url -> (URL, Date)? in
+                    guard let d = Self.parseDate(from: url) else { return nil }
+                    return (url, d)
+                }
+        }
+        // Inclut l'URL en cours même si le fichier n'a pas encore été créé
+        // sur disque (attachToRun précède le createFile du runner).
+        if let url = highlighting, !entries.contains(where: { $0.0 == url }),
+           let d = Self.parseDate(from: url) {
+            entries.append((url, d))
+        }
+        let sorted = entries.sorted { $0.1 > $1.1 }
+        self.historyFiles = sorted.map { $0.0 }
+
+        historyPopup.removeAllItems()
+        if sorted.isEmpty {
+            historyPopup.addItem(withTitle: "Aucun historique")
+            historyPopup.isEnabled = false
+        } else {
+            historyPopup.isEnabled = true
+            for (_, date) in sorted {
+                historyPopup.addItem(withTitle: Self.displayDateFormatter.string(from: date))
+            }
+            if let url = highlighting,
+               let idx = historyFiles.firstIndex(of: url) {
+                historyPopup.selectItem(at: idx)
+            }
+        }
+    }
+
+    /// Rafraîchit le popup juste avant qu'il s'ouvre, pour montrer les fichiers
+    /// récemment créés. Garde la coche sur le fichier actuellement affiché
+    /// (pas forcément le run en cours, si l'utilisateur en a sélectionné un autre).
+    func menuWillOpen(_ menu: NSMenu) {
+        if menu === historyPopup.menu {
+            refreshHistory(highlighting: displayedURL ?? logFileURL)
+        }
+    }
+
     /// État explicite (et non basé sur `window?.isVisible`, qui n'est pas
     /// encore false à l'instant de `windowWillClose`).
     private(set) var isShown: Bool = false
 
     func show() {
         isShown = true
+        refreshHistory(highlighting: displayedURL ?? logFileURL)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         onVisibilityChanged?()
@@ -1144,6 +1336,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         edit.addItem(NSMenuItem(title: "Select All",
                                 action: #selector(NSText.selectAll(_:)),
                                 keyEquivalent: "a"))
+        edit.addItem(NSMenuItem.separator())
+
+        // Find — utilise le selector standard de NSTextView/NSTextFinder. Les
+        // items ont `target = nil` → action routée via le responder chain
+        // jusqu'au NSTextView focus (logs window).
+        let findSel = #selector(NSTextView.performTextFinderAction(_:))
+        let findItem = NSMenuItem(title: "Find…",
+                                  action: findSel,
+                                  keyEquivalent: "f")
+        findItem.tag = NSTextFinder.Action.showFindInterface.rawValue
+        edit.addItem(findItem)
+
+        let findNext = NSMenuItem(title: "Find Next",
+                                  action: findSel,
+                                  keyEquivalent: "g")
+        findNext.tag = NSTextFinder.Action.nextMatch.rawValue
+        edit.addItem(findNext)
+
+        let findPrev = NSMenuItem(title: "Find Previous",
+                                  action: findSel,
+                                  keyEquivalent: "G")
+        findPrev.keyEquivalentModifierMask = [.command, .shift]
+        findPrev.tag = NSTextFinder.Action.previousMatch.rawValue
+        edit.addItem(findPrev)
+
         editItem.submenu = edit
         main.addItem(editItem)
 
