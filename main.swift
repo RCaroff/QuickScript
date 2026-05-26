@@ -351,7 +351,9 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
                                                width: totalWidth, height: totalHeight))
         contentView.autoresizingMask = [.width, .height]
 
-        // Barre du haut + bouton "Afficher dans le Finder"
+        // Toolbar gérée en Auto Layout via NSStackView : les boutons gardent
+        // leur taille intrinsèque, un spacer remplit l'espace libre, et le
+        // popup d'historique se contracte si la fenêtre est trop étroite.
         let toolbar = NSView(frame: NSRect(x: 0, y: totalHeight - toolbarHeight,
                                            width: totalWidth, height: toolbarHeight))
         toolbar.autoresizingMask = [.width, .minYMargin]
@@ -363,12 +365,9 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
         reveal.image = NSImage(systemSymbolName: "folder",
                                accessibilityDescription: nil)
         reveal.imagePosition = .imageLeading
-        reveal.sizeToFit()
-        var bf = reveal.frame
-        bf.origin.x = 12
-        bf.origin.y = (toolbarHeight - bf.size.height) / 2
-        reveal.frame = bf
-        toolbar.addSubview(reveal)
+        reveal.translatesAutoresizingMaskIntoConstraints = false
+        reveal.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        reveal.setContentCompressionResistancePriority(.required, for: .horizontal)
         self.revealButton = reveal
 
         let find = NSButton(title: "Rechercher",
@@ -378,30 +377,44 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
         find.image = NSImage(systemSymbolName: "magnifyingglass",
                              accessibilityDescription: nil)
         find.imagePosition = .imageLeading
-        find.sizeToFit()
-        var fbf = find.frame
-        fbf.origin.x = reveal.frame.maxX + 8
-        fbf.origin.y = (toolbarHeight - fbf.size.height) / 2
-        find.frame = fbf
-        toolbar.addSubview(find)
+        find.translatesAutoresizingMaskIntoConstraints = false
+        find.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        find.setContentCompressionResistancePriority(.required, for: .horizontal)
         self.findButton = find
 
-        // Popup d'historique des logs, ancré à droite de la toolbar.
-        let popupWidth: CGFloat = 240
-        let popupHeight: CGFloat = 26
-        let popup = NSPopUpButton(
-            frame: NSRect(x: totalWidth - popupWidth - 12,
-                          y: (toolbarHeight - popupHeight) / 2,
-                          width: popupWidth,
-                          height: popupHeight),
-            pullsDown: false
-        )
-        popup.autoresizingMask = [.minXMargin]
+        // Popup d'historique : large par défaut, peut se contracter jusqu'à
+        // une largeur minimale lisible quand la place manque.
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.translatesAutoresizingMaskIntoConstraints = false
         popup.target = nil
         popup.action = #selector(historySelected(_:))
         popup.toolTip = "Historique des lancements de ce script"
-        toolbar.addSubview(popup)
+        popup.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        popup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.historyPopup = popup
+
+        // Spacer flexible entre les boutons (à gauche) et le popup (à droite).
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let stack = NSStackView(views: [reveal, find, spacer, popup])
+        stack.orientation = .horizontal
+        stack.spacing = 8
+        stack.alignment = .centerY
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: toolbar.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            popup.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 110),
+        ])
 
         // Séparateur
         let sep = NSBox(frame: NSRect(x: 0,
