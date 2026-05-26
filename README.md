@@ -162,3 +162,4 @@ Tous sont lancés via `/usr/bin/env`, donc tout interpréteur trouvable dans le 
 - Variante PTY (pseudo-terminal) pour les scripts qui n'aiment pas tourner hors TTY
 # QuickScript
 # QuickScript
+# QuickScript
