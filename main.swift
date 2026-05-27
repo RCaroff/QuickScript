@@ -1913,12 +1913,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(empty)
         } else {
             for script in scripts {
+                // Pas d'action sur l'item racine : un clic ouvre seulement le
+                // sous-menu. L'exécution passe par « Exécuter » ou son alternate
+                // « Exécuter dans le terminal » (Option).
                 let item = NSMenuItem(
                     title: script.name,
-                    action: #selector(runScript(_:)),
+                    action: nil,
                     keyEquivalent: ""
                 )
-                item.target = self
                 item.representedObject = script.id.uuidString
 
                 let submenu = NSMenu()
