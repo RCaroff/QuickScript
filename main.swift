@@ -291,6 +291,7 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
     private let historyPopup: NSPopUpButton
     private let scriptLogsDirectory: URL
 
+
     /// URL du dernier lancement actif. Mis à jour à chaque attachToRun.
     private var logFileURL: URL?
 
@@ -1425,7 +1426,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
                 item.target = self
                 item.representedObject = script.id.uuidString
-                item.toolTip = script.path
 
                 let submenu = NSMenu()
                 submenu.autoenablesItems = false
@@ -1504,7 +1504,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                       action: #selector(openStorageJSON),
                                       keyEquivalent: "")
         openJSONItem.target = self
-        openJSONItem.toolTip = ScriptStore.shared.storageURL.path
         menu.addItem(openJSONItem)
 
         // Variante affichée tant que la touche Option est maintenue.
@@ -1512,7 +1511,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                         action: #selector(revealStorageJSON),
                                         keyEquivalent: "")
         revealJSONItem.target = self
-        revealJSONItem.toolTip = "Révéler dans le Finder"
         revealJSONItem.isAlternate = true
         revealJSONItem.keyEquivalentModifierMask = .option
         menu.addItem(revealJSONItem)
@@ -1521,7 +1519,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      action: #selector(refreshFromDisk),
                                      keyEquivalent: "r")
         refreshItem.target = self
-        refreshItem.toolTip = "Recharger scripts.json depuis le disque"
         menu.addItem(refreshItem)
 
         menu.addItem(NSMenuItem.separator())
