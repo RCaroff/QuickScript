@@ -30,12 +30,13 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
-# Compilation
-echo "▸ Compilation de main.swift…"
+# Compilation : collecte tous les .swift de Sources/ + main.swift
+echo "▸ Compilation Swift…"
+SOURCE_FILES=$(find Sources -name "*.swift" 2>/dev/null)
 swiftc -O \
     -framework Cocoa \
     -o "${MACOS_DIR}/${APP_NAME}" \
-    main.swift
+    main.swift $SOURCE_FILES
 
 # Info.plist
 cp Info.plist "${APP_BUNDLE}/Contents/Info.plist"

@@ -2,6 +2,13 @@
 
 Ce document décrit l'app pour qu'un futur Claude (ou toi-même dans 6 mois) puisse rapidement faire évoluer le code sans se perdre.
 
+> 📐 **Avant de modifier du code, lis aussi `architecture.md`** à la racine du
+> projet. Il documente le découpage MVC, les flows d'exécution, les
+> dépendances entre fichiers, les conventions de threading et donne des
+> recettes pour les évolutions courantes. Ce `CLAUDE.md` complète avec les
+> conventions générales, le build, les pièges, et l'historique des décisions
+> de design.
+
 ## Qu'est-ce que c'est ?
 
 QuickScript est un utilitaire macOS dans la barre des menus (status bar) qui permet d'enregistrer des scripts (bash, python, ruby, etc.) et de les lancer en un clic — soit silencieusement avec capture des logs, soit dans une fenêtre Terminal/iTerm, soit depuis le menu contextuel du Finder via NSServices.
@@ -10,24 +17,42 @@ C'est une app native **Swift + AppKit**, pas SwiftUI. `LSUIElement = true` → p
 
 ## Structure du projet
 
+L'architecture suit un découpage MVC strict. `main.swift` n'est qu'un point
+d'entrée minimal ; toute la logique vit dans `Sources/`.
+
 ```
 QuickScript/
-├── main.swift          ← tout le code Swift (~1500 lignes, mono-fichier volontairement)
-├── Info.plist          ← métadonnées app : bundle ID, NSServices, URL scheme, etc.
-├── build.sh            ← compile main.swift en .app bundle, install dans ~/Applications
-├── README.md           ← documentation utilisateur
-├── CLAUDE.md           ← ce fichier
-├── icon/               ← icône macOS
-│   ├── icon.svg            ← source vectorielle (modifiable)
-│   ├── preview.png         ← aperçu 512px
-│   └── AppIcon.iconset/    ← 10 PNGs (16→1024) compilés en .icns par iconutil
-├── test-scripts/       ← scripts bash d'exemple pour tester chaque feature
-│   ├── new-file.sh, new-file-here.sh, files-info.sh,
-│   ├── interactive-prompt.sh, error-demo.sh, silent-ok.sh,
-│   ├── gh-switch-*.sh, flatten-folder.sh
-└── build/              ← output du build (généré, gitignorable)
-    └── QuickScript.app
+├── main.swift              ← 10 lignes — instancie AppDelegate + app.run()
+├── Info.plist              ← bundle ID, NSServices, icon, etc.
+├── build.sh                ← compile tous les .swift en .app bundle
+├── README.md, CLAUDE.md
+├── icon/                   ← icon.svg + AppIcon.iconset/
+├── test-scripts/           ← scripts bash d'exemple
+├── build/                  ← output (gitignorable)
+└── Sources/
+    ├── Models/
+    │   ├── Script.swift               ← struct Script + ScriptParam
+    │   ├── ScriptStore.swift          ← singleton persistance JSON
+    │   └── EditableParam.swift        ← ligne mutable de l'éditeur
+    ├── Views/
+    │   └── FlippedView.swift          ← NSView avec coords top-down
+    ├── Dialogs/
+    │   └── ParamInputDialog.swift     ← NSAlert N text fields au lancement
+    ├── Controllers/
+    │   ├── AppDelegate.swift          ← menu bar app, status item, NSServices
+    │   ├── ScriptRunner.swift         ← exécution silencieuse via PTY
+    │   ├── TerminalLauncher.swift     ← exécution dans Terminal/iTerm via AS
+    │   ├── LogWindowController.swift  ← fenêtre de logs + popup historique
+    │   └── ParamEditorWindowController.swift  ← fenêtre d'édition de @param
+    └── Helpers/
+        ├── ScriptHeaderParser.swift   ← parse `# @param` du fichier source
+        ├── ParamSerializer.swift      ← réécrit `# @param` dans le fichier
+        ├── ANSIParser.swift           ← ANSI escape codes → NSAttributedString
+        ├── QSLog.swift                ← chemins ~/Library/.../logs/...
+        └── PTY.swift                  ← posix_openpt + termios
 ```
+
+**Compilation** : `build.sh` collecte tous les `.swift` via `find Sources -name "*.swift"` et les passe à `swiftc` en plus de `main.swift`. Aucune dépendance externe, pas de SwiftPM, pas de Xcode project — juste swiftc + un bundle .app construit à la main.
 
 ## Icône
 
@@ -48,21 +73,28 @@ plus difficile à équilibrer aux tailles de la menu bar).
 
 Pas de Xcode project. La compilation passe par `swiftc` direct dans `build.sh`, qui crée ensuite manuellement le bundle `.app`.
 
-## Anatomie de `main.swift`
+## Anatomie du code
 
-Le fichier est mono pour simplicité. Les sections sont délimitées par des `// MARK: -` :
+Un fichier = une responsabilité. Les sections internes restent délimitées par
+`// MARK: -` quand pertinent.
 
-| Section | Contenu |
-|---------|---------|
-| `Modèle` | `Script` (Codable), `ScriptParam` |
-| `Persistance JSON` | `ScriptStore` (singleton, ~/Library/Application Support/QuickScript/scripts.json) |
-| `Parser de l'en-tête de script` | `ScriptHeaderParser` — lit les directives `# @param NAME[=DEFAULT] [description]` |
-| `Dialog de saisie des paramètres` | `ParamInputDialog` — NSAlert avec N text fields générés depuis les @param |
-| `Logs : fichier .log + fenêtre live` | `QSLog` (helpers de chemins), `LogWindowController` (NSWindow custom) |
-| `Runner (exécution silencieuse)` | `ScriptRunner` — Process + PTY + capture + détection de prompt |
-| `TerminalLauncher` | Mode alternate Option : lance dans Terminal.app/iTerm via AppleScript |
-| `PTY` | Helper `PTY.open()` pour `posix_openpt` + `grantpt` + `unlockpt` + termios |
-| `AppDelegate` | Status item, menu builder, handlers de tous les @objc, NSServices, URL scheme |
+| Fichier | Rôle |
+|---------|------|
+| `Models/Script.swift` | `struct Script` (Codable, id+name+path) et `ScriptParam` |
+| `Models/ScriptStore.swift` | Singleton de persistance JSON (`scripts.json`) |
+| `Models/EditableParam.swift` | Classe mutable utilisée par l'éditeur (ref type pour mutation via cellules de tableau) |
+| `Helpers/ScriptHeaderParser.swift` | Parse les directives `# @param NAME[=DEFAULT] [description]` |
+| `Helpers/ParamSerializer.swift` | Réécrit les `# @param` dans le fichier `.sh` (remplace en place ou insère après le shebang) |
+| `Helpers/ANSIParser.swift` | Convertit les séquences ANSI SGR en `NSAttributedString` |
+| `Helpers/QSLog.swift` | Helpers de chemins pour `~/Library/Application Support/QuickScript/logs/` |
+| `Helpers/PTY.swift` | `posix_openpt` + `grantpt` + `unlockpt` + termios — utilisé par `ScriptRunner` |
+| `Views/FlippedView.swift` | `NSView` avec `isFlipped = true` (coords top-down) |
+| `Dialogs/ParamInputDialog.swift` | `NSAlert` avec N text fields générés depuis les `@param` |
+| `Controllers/ScriptRunner.swift` | Exécution silencieuse via PTY, capture stdout/stderr, détection de prompt stdin, alerte d'erreur |
+| `Controllers/TerminalLauncher.swift` | Exécution dans Terminal.app/iTerm via AppleScript, wrap `script(1)` pour le log fichier |
+| `Controllers/LogWindowController.swift` | Fenêtre persistante par script, popup historique, NSTextView avec ANSI |
+| `Controllers/ParamEditorWindowController.swift` | Fenêtre NSTableView pour ajouter/réordonner les `@param` |
+| `Controllers/AppDelegate.swift` | Coordinateur : status item, menu bar, NSServices handlers, cycle de vie des runners et windows |
 
 ## Comment lire le flow
 
