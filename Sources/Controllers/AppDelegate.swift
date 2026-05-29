@@ -24,6 +24,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         set { UserDefaults.standard.set(newValue, forKey: alwaysShowLogsKey) }
     }
 
+    // Préférence globale : si true, tout clic sur « Run » est traité comme
+    // « Run in terminal » (Terminal.app / iTerm prend le relais).
+    private let alwaysRunInTerminalKey = "alwaysRunInTerminal"
+    private var alwaysRunInTerminal: Bool {
+        get { UserDefaults.standard.bool(forKey: alwaysRunInTerminalKey) }
+        set { UserDefaults.standard.set(newValue, forKey: alwaysRunInTerminalKey) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
 
@@ -236,6 +244,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let alwaysTerminalItem = NSMenuItem(title: "Always run in terminal",
+                                            action: #selector(toggleAlwaysRunInTerminal),
+                                            keyEquivalent: "")
+        alwaysTerminalItem.target = self
+        alwaysTerminalItem.state = alwaysRunInTerminal ? .on : .off
+        menu.addItem(alwaysTerminalItem)
+
         let alwaysShowItem = NSMenuItem(title: "Always show logs window at run",
                                         action: #selector(toggleAlwaysShowLogs),
                                         keyEquivalent: "")
@@ -363,7 +378,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if openInTerminal {
+        // La pref globale « Always run in terminal » force le mode terminal,
+        // même si l'utilisateur a cliqué sur « Run » plutôt que sur l'alternate
+        // Option « Run in terminal ».
+        let effectiveOpenInTerminal = openInTerminal || alwaysRunInTerminal
+
+        if effectiveOpenInTerminal {
             // Mode terminal : Terminal.app/iTerm prend le relais, on n'a aucun
             // contrôle (ni logs runtime, ni exit code, ni détection de prompt).
             // Le fichier .log est créé via le wrapper `script(1)`.
@@ -547,6 +567,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleAlwaysShowLogs() {
         alwaysShowLogsAtRun.toggle()
+        rebuildMenu()
+    }
+
+    @objc private func toggleAlwaysRunInTerminal() {
+        alwaysRunInTerminal.toggle()
         rebuildMenu()
     }
 
