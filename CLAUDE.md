@@ -142,6 +142,8 @@ Le wrap `script -q -a` (utilitaire BSD `script(1)`) capture toute la session ter
 
 Les `@param` du script sont passés en arguments CLI (`$1`, `$2`, …) — **jamais** mélangés avec les fichiers du Quick Action (qui ne sont pas dans argv).
 
+**Convention flag-style** : si le NAME d'un `@param` commence par `-` (ex : `# @param -service NAME`), QuickScript passe `-service value` au lieu de juste `value`. Pour les scripts qui parsent leurs args via `while case $1 in -flag) …`, c'est la voie naturelle. Si la valeur fournie est vide, le flag n'est pas émis du tout (flag optionnel non utilisé). Logique dans `AppDelegate.launch(...)`.
+
 ## Persistance
 
 `scripts.json` :

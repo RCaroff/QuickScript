@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Bascule le compte gh actif sur RCaroff-Molotov.
+# Switches the active gh account to RCaroff-Molotov.
 #
 set -euo pipefail
 

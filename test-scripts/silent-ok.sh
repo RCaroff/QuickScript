@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Démontre l'exécution silencieuse : le script fait quelque chose puis sort en 0.
-# QuickScript n'affiche rien (pas d'alerte, pas de terminal).
+# Demonstrates fully silent execution: the script does something and exits 0.
+# QuickScript shows nothing (no alert, no terminal).
 #
-# @param target=~/Desktop/quickscript-touch  Chemin du fichier à toucher
+# @param target=~/Desktop/quickscript-touch   Path of the file to touch
 #
 set -euo pipefail
 
-target="${1:?chemin manquant}"
-# Expansion manuelle de ~ (passé en littéral par l'app)
+target="${1:?missing path}"
+# Manual expansion of ~ (passed as a literal by the app)
 target="${target/#\~/$HOME}"
 
 touch "$target"

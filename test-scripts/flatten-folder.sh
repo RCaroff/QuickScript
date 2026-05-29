@@ -1,60 +1,60 @@
 #!/usr/bin/env bash
 #
-# Aplatit l'arborescence : déplace récursivement tous les fichiers des
-# sous-dossiers vers le dossier cible, puis (optionnellement) supprime
-# les sous-dossiers devenus vides.
+# Flattens the tree: recursively moves all files from subdirectories into
+# the target folder, then (optionally) removes the empty subdirectories.
 #
-# Résolution du dossier cible, par ordre de priorité :
-#   1. @param target_dir         (saisi dans le dialog QuickScript)
-#   2. $QS_CONTEXT_TARGET_PATH   (Quick Action « Exécuter ici »)
-#   3. $QS_CONTEXT_FILE_PATH     (clic droit sur un unique dossier dans Finder)
+# Resolution of the target folder, in priority order:
+#   1. @param target_dir         (entered in the QuickScript dialog)
+#   2. $QS_CONTEXT_TARGET_PATH   (Quick Action « Run here »)
+#   3. $QS_CONTEXT_FILE_PATH     (right-click on a single folder in Finder)
 #
-# Une liste de dossiers sensibles (/ /Users $HOME /Applications …) est
-# rejetée pour éviter tout accident.
+# A list of sensitive folders (/ /Users $HOME /Applications …) is rejected
+# to prevent any accident.
 #
-# @param target_dir=              Dossier cible (laisse vide pour utiliser $QS_CONTEXT_TARGET_PATH)
-# @param on_conflict=rename       En cas de conflit : rename / skip / overwrite
-# @param remove_empty_dirs=oui    Supprimer les sous-dossiers vides après ? (oui/non)
+# @param target_dir=              Target folder (leave empty to use $QS_CONTEXT_TARGET_PATH)
+# @param on_conflict=rename       On conflict: rename / skip / overwrite
+# @param remove_empty_dirs=yes    Remove empty subdirectories afterwards? (yes/no)
 #
 set -euo pipefail
 
 target_param="${1:-}"
 on_conflict="${2:-rename}"
-remove_empty_dirs="${3:-oui}"
+remove_empty_dirs="${3:-yes}"
 
-# Résolution du dossier cible
+# Target folder resolution
 target=""
 if [[ -n "$target_param" ]]; then
     target="$target_param"
 elif [[ -n "${QS_CONTEXT_TARGET_PATH:-}" ]]; then
     target="$QS_CONTEXT_TARGET_PATH"
 elif [[ -n "${QS_CONTEXT_FILE_PATH:-}" ]]; then
-    # Cas clic droit sur un (ou plusieurs) item dans Finder.
-    # On accepte uniquement si un unique dossier est sélectionné.
+    # Right-click on (one or more) items in Finder.
+    # Only accept if a single folder is selected.
     file_count=$(printf '%s\n' "$QS_CONTEXT_FILE_PATH" | grep -c .)
     if [[ "$file_count" -eq 1 ]] && [[ -d "$QS_CONTEXT_FILE_PATH" ]]; then
         target="$QS_CONTEXT_FILE_PATH"
     else
-        echo "Erreur : sélection multiple ou non-dossier." >&2
-        echo "Sélectionne un unique dossier, ou clique droit dans le vide." >&2
+        echo "Error: multiple selection or non-folder." >&2
+        echo "Select a single folder, or right-click in empty space." >&2
         exit 1
     fi
 else
-    echo "Erreur : aucun dossier cible." >&2
-    echo "Lance le script depuis Finder (clic droit sur un dossier ou dans le vide)," >&2
-    echo "ou renseigne le paramètre target_dir." >&2
+    echo "Error: no target folder." >&2
+    echo "Run the script from Finder (right-click on a folder or in empty space)," >&2
+    echo "or fill in the target_dir parameter." >&2
     exit 1
 fi
 
-# Expansion du tilde et résolution du chemin absolu
+# Tilde expansion and absolute path resolution
 target="${target/#\~/$HOME}"
 if ! target=$(cd "$target" 2>/dev/null && pwd -P); then
-    echo "Dossier cible introuvable : ${target_param:-$QS_CONTEXT_TARGET_PATH}" >&2
+    echo "Target folder not found: ${target_param:-$QS_CONTEXT_TARGET_PATH}" >&2
     exit 1
 fi
 
-# Garde-fou : refuse les dossiers sensibles. Sans ça, lancer le script sans
-# contexte ($PWD=/ quand l'app est lancée par macOS) ferait des dégâts.
+# Safety guard: reject sensitive folders. Without it, running the script
+# without context ($PWD=/ when the app is launched by macOS) would be a
+# disaster.
 forbidden=(
     "/"
     "/Users"
@@ -72,19 +72,19 @@ forbidden=(
 )
 for f in "${forbidden[@]}"; do
     if [[ "$target" == "$f" ]]; then
-        echo "Refus : « $target » est un dossier sensible." >&2
-        echo "Choisis un dossier de travail spécifique." >&2
+        echo "Refused: « $target » is a sensitive folder." >&2
+        echo "Choose a specific working folder." >&2
         exit 2
     fi
 done
 
-echo "Cible : $target"
+echo "Target: $target"
 
 moved=0
 skipped=0
 overwritten=0
 
-# -mindepth 2 : ignore les fichiers déjà à la racine de $target
+# -mindepth 2: ignore files already at the root of $target
 while IFS= read -r -d '' src; do
     name=$(basename "$src")
     dest="$target/$name"
@@ -92,7 +92,7 @@ while IFS= read -r -d '' src; do
     if [[ -e "$dest" ]]; then
         case "$on_conflict" in
             skip)
-                echo "Existe déjà, ignoré : $name" >&2
+                echo "Already exists, skipped: $name" >&2
                 skipped=$((skipped + 1))
                 continue
                 ;;
@@ -118,10 +118,10 @@ while IFS= read -r -d '' src; do
     fi
 done < <(find "$target" -mindepth 2 -type f -print0)
 
-if [[ "$remove_empty_dirs" == "oui" ]]; then
+if [[ "$remove_empty_dirs" == "yes" ]]; then
     find "$target" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 fi
 
-echo "Déplacés    : $moved"
-[[ "$on_conflict" == "overwrite" ]] && echo "Écrasés     : $overwritten"
-[[ "$on_conflict" == "skip" ]] && echo "Ignorés     : $skipped"
+echo "Moved       : $moved"
+[[ "$on_conflict" == "overwrite" ]] && echo "Overwritten : $overwritten"
+[[ "$on_conflict" == "skip" ]] && echo "Skipped     : $skipped"

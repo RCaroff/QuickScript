@@ -1,33 +1,33 @@
 #!/usr/bin/env bash
 #
-# Démontre la saisie de paramètres via la convention @param.
-# QuickScript affichera 3 text fields au clic, puis lancera ce script avec
-# les valeurs passées en argument ($1, $2, $3).
+# Demonstrates @param input via the convention.
+# QuickScript shows 3 text fields on click, then runs this script with
+# the values passed as arguments ($1, $2, $3).
 #
-# @param target_dir=~/Desktop   Dossier où créer le fichier
-# @param filename=note.txt      Nom du fichier à créer
-# @param content=Hello          Contenu initial du fichier
+# @param target_dir=~/Desktop   Folder where the file will be created
+# @param filename=note.txt      Name of the file to create
+# @param content=Hello          Initial content
 #
 set -euo pipefail
 
-target_dir="${1:?dossier cible manquant}"
-filename="${2:?nom de fichier manquant}"
+target_dir="${1:?missing target directory}"
+filename="${2:?missing file name}"
 content="${3:-}"
 
-# Expansion manuelle de ~ (passé en littéral par l'app)
+# Manual expansion of ~ (passed as a literal by the app)
 target_dir="${target_dir/#\~/$HOME}"
 
 if [[ ! -d "$target_dir" ]]; then
-    echo "Le dossier n'existe pas : $target_dir" >&2
+    echo "Folder does not exist: $target_dir" >&2
     exit 1
 fi
 
 dest="$target_dir/$filename"
 
 if [[ -e "$dest" ]]; then
-    echo "Le fichier existe déjà : $dest" >&2
+    echo "File already exists: $dest" >&2
     exit 1
 fi
 
 printf '%s\n' "$content" > "$dest"
-echo "Créé : $dest"
+echo "Created: $dest"

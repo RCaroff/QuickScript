@@ -64,7 +64,7 @@ final class ScriptStore {
             let data = try encoder.encode(scripts)
             try data.write(to: storageURL, options: .atomic)
         } catch {
-            NSLog("QuickScript: échec de sauvegarde - \(error)")
+            NSLog("QuickScript: save failed - \(error)")
         }
     }
 
@@ -228,7 +228,7 @@ enum ParamSerializer {
             try newContent.write(toFile: path, atomically: true, encoding: .utf8)
             return true
         } catch {
-            NSLog("QuickScript: écriture des @param impossible - \(error)")
+            NSLog("QuickScript: unable to write @param - \(error)")
             return false
         }
     }
@@ -272,11 +272,11 @@ enum ParamInputDialog {
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
-        alert.messageText = "Paramètres pour « \(scriptName) »"
-        alert.informativeText = "Renseigne les paramètres avant de lancer le script."
+        alert.messageText = "Parameters for « \(scriptName) »"
+        alert.informativeText = "Fill in the parameters before running the script."
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Lancer")
-        alert.addButton(withTitle: "Annuler")
+        alert.addButton(withTitle: "Run")
+        alert.addButton(withTitle: "Cancel")
 
         let width: CGFloat = 380
         let labelHeight: CGFloat = 16
@@ -396,7 +396,7 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
             backing: .buffered,
             defer: false
         )
-        window.title = "Paramètres — \(scriptName)"
+        window.title = "Parameters — \(scriptName)"
         window.isReleasedWhenClosed = false
         window.center()
 
@@ -417,13 +417,15 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         guard let contentView = window?.contentView else { return }
 
         // En-tête
-        let title = NSTextField(labelWithString: "Paramètres pour « \(scriptName) »")
+        let title = NSTextField(labelWithString: "Parameters for « \(scriptName) »")
         title.font = NSFont.boldSystemFont(ofSize: 14)
         title.translatesAutoresizingMaskIntoConstraints = false
 
         let subtitle = NSTextField(wrappingLabelWithString:
-            "Ces lignes seront écrites comme directives « # @param … » dans le script. " +
-            "Drag&drop pour réordonner.")
+            "These lines will be written as « # @param … » directives in the script. " +
+            "Prefix the name with « - » (e.g. -service) to pass the value as a flag " +
+            "(-service value) instead of a positional argument. " +
+            "Drag & drop to reorder.")
         subtitle.font = NSFont.systemFont(ofSize: 11)
         subtitle.textColor = NSColor.secondaryLabelColor
         subtitle.translatesAutoresizingMaskIntoConstraints = false
@@ -470,13 +472,13 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         addRemove.translatesAutoresizingMaskIntoConstraints = false
 
         // OK / Annuler
-        let cancelBtn = NSButton(title: "Annuler",
+        let cancelBtn = NSButton(title: "Cancel",
                                  target: self,
                                  action: #selector(cancel))
         cancelBtn.bezelStyle = .rounded
         cancelBtn.keyEquivalent = "\u{1b}" // Esc
 
-        let okBtn = NSButton(title: "Enregistrer",
+        let okBtn = NSButton(title: "Save",
                              target: self,
                              action: #selector(saveAndClose))
         okBtn.bezelStyle = .rounded
@@ -539,19 +541,19 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         tableView.addTableColumn(posCol)
 
         let nameCol = NSTableColumn(identifier: nameColID)
-        nameCol.title = "Nom"
+        nameCol.title = "Name"
         nameCol.width = 140
         nameCol.minWidth = 80
         tableView.addTableColumn(nameCol)
 
         let defaultCol = NSTableColumn(identifier: defaultColID)
-        defaultCol.title = "Valeur par défaut"
+        defaultCol.title = "Default value"
         defaultCol.width = 140
         defaultCol.minWidth = 80
         tableView.addTableColumn(defaultCol)
 
         let descCol = NSTableColumn(identifier: descColID)
-        descCol.title = "Description (optionnelle)"
+        descCol.title = "Description (optional)"
         descCol.width = 260
         descCol.minWidth = 100
         tableView.addTableColumn(descCol)
@@ -596,8 +598,8 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         let ok = ParamSerializer.write(asScriptParams, toScriptAt: scriptPath)
         if !ok {
             let alert = NSAlert()
-            alert.messageText = "Impossible d'écrire dans le fichier"
-            alert.informativeText = "Vérifie que le script existe et est éditable :\n\(scriptPath)"
+            alert.messageText = "Unable to write to the file"
+            alert.informativeText = "Verify the script exists and is editable:\n\(scriptPath)"
             alert.addButton(withTitle: "OK")
             _ = alert.runModal()
             return
@@ -678,11 +680,11 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
             field.textColor = NSColor.secondaryLabelColor
         case nameColID:
             field.stringValue = p.name
-            field.placeholderString = "nom"
+            field.placeholderString = "name"
             field.isEditable = true
         case defaultColID:
             field.stringValue = p.defaultValue
-            field.placeholderString = "valeur par défaut"
+            field.placeholderString = "default value"
             field.isEditable = true
         case descColID:
             field.stringValue = p.descText
@@ -726,6 +728,157 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         if identifier == nameColID { p.name = value }
         else if identifier == defaultColID { p.defaultValue = value }
         else if identifier == descColID { p.descText = value }
+    }
+}
+
+// ============================================================================
+// MARK: - Parser ANSI escape codes (SGR)
+// ============================================================================
+
+/// Convertit du texte contenant des séquences ANSI (CSI/SGR) en NSAttributedString
+/// avec couleurs, bold, italic, underline appliqués. Les séquences non SGR
+/// (terminées par autre chose que 'm') sont strippées silencieusement. Les
+/// codes SGR non reconnus sont ignorés sans casser le rendu.
+enum ANSIParser {
+
+    static func attributedString(from text: String,
+                                  baseFont: NSFont,
+                                  baseColor: NSColor = NSColor.labelColor) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let esc: Character = "\u{1B}"
+
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: baseFont,
+            .foregroundColor: baseColor,
+        ]
+
+        var index = text.startIndex
+        var bufferStart = text.startIndex
+
+        while index < text.endIndex {
+            if text[index] != esc {
+                index = text.index(after: index)
+                continue
+            }
+            // Flush buffer
+            if bufferStart < index {
+                result.append(NSAttributedString(
+                    string: String(text[bufferStart..<index]),
+                    attributes: attrs
+                ))
+            }
+
+            let afterEsc = text.index(after: index)
+            // Séquence CSI : ESC + '['
+            if afterEsc < text.endIndex && text[afterEsc] == "[" {
+                let paramStart = text.index(after: afterEsc)
+                var seqEnd = paramStart
+                while seqEnd < text.endIndex && !text[seqEnd].isLetter {
+                    seqEnd = text.index(after: seqEnd)
+                }
+                if seqEnd < text.endIndex {
+                    let codeStr = String(text[paramStart..<seqEnd])
+                    if text[seqEnd] == "m" {
+                        applySGR(codeStr, to: &attrs, baseFont: baseFont, baseColor: baseColor)
+                    }
+                    index = text.index(after: seqEnd)
+                    bufferStart = index
+                    continue
+                }
+            }
+            // ESC isolé ou séquence mal formée → skip ESC
+            index = afterEsc
+            bufferStart = index
+        }
+
+        if bufferStart < text.endIndex {
+            result.append(NSAttributedString(
+                string: String(text[bufferStart..<text.endIndex]),
+                attributes: attrs
+            ))
+        }
+
+        return result
+    }
+
+    /// Applique un ensemble de codes SGR (séparés par ';') à `attrs`.
+    private static func applySGR(_ code: String,
+                                  to attrs: inout [NSAttributedString.Key: Any],
+                                  baseFont: NSFont,
+                                  baseColor: NSColor) {
+        let parts: [Int] = code.isEmpty
+            ? [0]
+            : code.split(separator: ";").compactMap { Int($0) }
+
+        // État courant (lecture)
+        var bold = (attrs[.font] as? NSFont)?
+            .fontDescriptor.symbolicTraits.contains(.bold) ?? false
+        var italic = (attrs[.font] as? NSFont)?
+            .fontDescriptor.symbolicTraits.contains(.italic) ?? false
+        var underline = ((attrs[.underlineStyle] as? Int) ?? 0) != 0
+
+        var i = 0
+        while i < parts.count {
+            let n = parts[i]
+            switch n {
+            case 0:
+                attrs[.foregroundColor] = baseColor
+                attrs.removeValue(forKey: .backgroundColor)
+                bold = false; italic = false; underline = false
+            case 1:  bold = true
+            case 3:  italic = true
+            case 4:  underline = true
+            case 22: bold = false
+            case 23: italic = false
+            case 24: underline = false
+            // Foreground 8 couleurs standard
+            case 30: attrs[.foregroundColor] = NSColor.textColor.withAlphaComponent(0.85)
+            case 31: attrs[.foregroundColor] = NSColor.systemRed
+            case 32: attrs[.foregroundColor] = NSColor.systemGreen
+            case 33: attrs[.foregroundColor] = NSColor.systemYellow
+            case 34: attrs[.foregroundColor] = NSColor.systemBlue
+            case 35: attrs[.foregroundColor] = NSColor.systemPurple
+            case 36: attrs[.foregroundColor] = NSColor.systemTeal
+            case 37: attrs[.foregroundColor] = NSColor.secondaryLabelColor
+            case 39: attrs[.foregroundColor] = baseColor
+            // Foreground bright (90-97)
+            case 90: attrs[.foregroundColor] = NSColor.systemGray
+            case 91: attrs[.foregroundColor] = NSColor.systemPink
+            case 92: attrs[.foregroundColor] = NSColor.systemMint
+            case 93: attrs[.foregroundColor] = NSColor.systemOrange
+            case 94: attrs[.foregroundColor] = NSColor.systemCyan
+            case 95: attrs[.foregroundColor] = NSColor.systemPink
+            case 96: attrs[.foregroundColor] = NSColor.systemTeal
+            case 97: attrs[.foregroundColor] = baseColor
+            // Background — ignoré pour préserver la lisibilité (le textView a son
+            // propre fond système). Désactive seulement quand demandé.
+            case 40...47, 100...107: break
+            case 49: attrs.removeValue(forKey: .backgroundColor)
+            // RGB 24-bit / 256-color (avancé) — on consomme les bytes pour ne pas
+            // les ré-interpréter en tant que codes simples, mais sans appliquer.
+            case 38, 48:
+                if i + 1 < parts.count {
+                    let mode = parts[i + 1]
+                    if mode == 5, i + 2 < parts.count { i += 2 }
+                    else if mode == 2, i + 4 < parts.count { i += 4 }
+                }
+            default: break
+            }
+            i += 1
+        }
+
+        // Application des traits font
+        var traits = NSFontDescriptor.SymbolicTraits()
+        if bold { traits.insert(.bold) }
+        if italic { traits.insert(.italic) }
+        let descriptor = baseFont.fontDescriptor.withSymbolicTraits(traits)
+        attrs[.font] = NSFont(descriptor: descriptor, size: baseFont.pointSize) ?? baseFont
+
+        if underline {
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        } else {
+            attrs.removeValue(forKey: .underlineStyle)
+        }
     }
 }
 
@@ -815,11 +968,11 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
         return f
     }()
 
-    /// Format affiché dans le popup : "le 25/05/2026 à 14:30:45".
+    /// Format displayed in the popup: "on 25/05/2026 at 14:30:45".
     private static let displayDateFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "'le' dd/MM/yyyy 'à' HH:mm:ss"
-        f.locale = Locale(identifier: "fr_FR")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
 
@@ -852,7 +1005,7 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
                                            width: totalWidth, height: toolbarHeight))
         toolbar.autoresizingMask = [.width, .minYMargin]
 
-        let reveal = NSButton(title: "Afficher dans le Finder",
+        let reveal = NSButton(title: "Reveal in Finder",
                               target: nil,
                               action: #selector(revealLogInFinder))
         reveal.bezelStyle = .rounded
@@ -864,7 +1017,7 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
         reveal.setContentCompressionResistancePriority(.required, for: .horizontal)
         self.revealButton = reveal
 
-        let find = NSButton(title: "Rechercher",
+        let find = NSButton(title: "Find",
                             target: nil,
                             action: #selector(showFindBar))
         find.bezelStyle = .rounded
@@ -882,7 +1035,7 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
         popup.translatesAutoresizingMaskIntoConstraints = false
         popup.target = nil
         popup.action = #selector(historySelected(_:))
-        popup.toolTip = "Historique des lancements de ce script"
+        popup.toolTip = "Execution history for this script"
         popup.setContentHuggingPriority(.defaultLow, for: .horizontal)
         popup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.historyPopup = popup
@@ -1021,15 +1174,14 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
 
     /// Append du texte dans le NSTextView. Thread-safe. Ignoré si on est en
     /// mode "viewing" (un fichier passé est affiché via le popup).
+    /// Les séquences ANSI escape codes éventuelles sont interprétées en
+    /// couleurs / bold / italic / underline.
     func append(_ text: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, self.liveMode,
                   let storage = self.textView.textStorage else { return }
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: self.monoFont,
-                .foregroundColor: NSColor.labelColor,
-            ]
-            storage.append(NSAttributedString(string: text, attributes: attrs))
+            let attributed = ANSIParser.attributedString(from: text, baseFont: self.monoFont)
+            storage.append(attributed)
             self.textView.scrollToEndOfDocument(nil)
         }
     }
@@ -1069,14 +1221,12 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
                let s = String(data: data, encoding: .utf8) {
                 content = s
             } else {
-                content = "(impossible de lire le fichier)\n\(url.path)"
+                content = "(unable to read file)\n\(url.path)"
             }
 
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: self.monoFont,
-                .foregroundColor: NSColor.labelColor,
-            ]
-            storage.setAttributedString(NSAttributedString(string: content, attributes: attrs))
+            // Parsing ANSI : un fichier .log peut contenir les codes bruts.
+            let attributed = ANSIParser.attributedString(from: content, baseFont: self.monoFont)
+            storage.setAttributedString(attributed)
             self.textView.scrollToEndOfDocument(nil)
 
             self.displayedURL = url
@@ -1113,7 +1263,7 @@ final class LogWindowController: NSWindowController, NSWindowDelegate, NSMenuDel
 
         historyPopup.removeAllItems()
         if sorted.isEmpty {
-            historyPopup.addItem(withTitle: "Aucun historique")
+            historyPopup.addItem(withTitle: "No history")
             historyPopup.isEnabled = false
         } else {
             historyPopup.isEnabled = true
@@ -1224,8 +1374,8 @@ final class ScriptRunner {
         self.onFinish = onFinish
 
         guard FileManager.default.fileExists(atPath: script.path) else {
-            showFailure(title: "Fichier introuvable",
-                        info: "Le script n'existe plus à :\n\(script.path)")
+            showFailure(title: "File not found",
+                        info: "The script no longer exists at:\n\(script.path)")
             onFinish?()
             return
         }
@@ -1238,8 +1388,8 @@ final class ScriptRunner {
 
         // Alloue un PTY (master côté app, slave côté script)
         guard let pty = PTY.open() else {
-            showFailure(title: "PTY indisponible",
-                        info: "Impossible d'allouer un pseudo-terminal pour ce script.")
+            showFailure(title: "PTY unavailable",
+                        info: "Unable to allocate a pseudo-terminal for this script.")
             onFinish?()
             return
         }
@@ -1291,7 +1441,7 @@ final class ScriptRunner {
             Darwin.close(pty.masterFD)
             Darwin.close(pty.slaveFD)
             masterFD = -1
-            showFailure(title: "Échec du lancement",
+            showFailure(title: "Launch failed",
                         info: error.localizedDescription)
             onFinish?()
             return
@@ -1331,7 +1481,7 @@ final class ScriptRunner {
                 try handle.write(contentsOf: data)
                 try handle.write(contentsOf: Data("\n".utf8))
             } catch {
-                NSLog("QuickScript: écriture log impossible - \(error)")
+                NSLog("QuickScript: unable to write log - \(error)")
             }
         }
 
@@ -1419,11 +1569,11 @@ final class ScriptRunner {
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
-        alert.messageText = "« \(script.name) » attend une saisie"
+        alert.messageText = "« \(script.name) » is waiting for input"
         alert.informativeText = prompt
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Envoyer")
-        alert.addButton(withTitle: "Annuler le script")
+        alert.addButton(withTitle: "Send")
+        alert.addButton(withTitle: "Cancel script")
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
         alert.accessoryView = field
@@ -1437,7 +1587,7 @@ final class ScriptRunner {
                 do {
                     try masterHandle?.write(contentsOf: data)
                 } catch {
-                    NSLog("QuickScript: écriture stdin impossible - \(error)")
+                    NSLog("QuickScript: unable to write stdin - \(error)")
                 }
             }
             queue.sync {
@@ -1488,11 +1638,11 @@ final class ScriptRunner {
 
         // Message final dans la fenêtre live
         if code == 0 {
-            logWindow?.appendInfoLine("\n→ terminé (exit 0)")
+            logWindow?.appendInfoLine("\n→ done (exit 0)")
         } else if userCancelled {
-            logWindow?.appendInfoLine("\n→ annulé par l'utilisateur")
+            logWindow?.appendInfoLine("\n→ cancelled by user")
         } else {
-            logWindow?.appendInfoLine("\n→ erreur (exit \(code))")
+            logWindow?.appendInfoLine("\n→ error (exit \(code))")
         }
 
         defer { onFinish?() }
@@ -1525,27 +1675,31 @@ final class ScriptRunner {
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
-        alert.messageText = "« \(script.name) » a échoué (code \(code))"
-        alert.informativeText = "Le script s'est terminé avec une erreur. Détails ci-dessous."
+        alert.messageText = "« \(script.name) » failed (code \(code))"
+        alert.informativeText = "The script ended with an error. Details below."
         alert.alertStyle = .critical
         alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Copier les logs")
+        alert.addButton(withTitle: "Copy logs")
 
         let cleaned = logs.trimmingCharacters(in: .whitespacesAndNewlines)
-        let display = cleaned.isEmpty ? "(aucune sortie)" : cleaned
-        alert.accessoryView = Self.makeScrollableText(display, width: 520, height: 240)
+        let display = cleaned.isEmpty ? "(no output)" : cleaned
+        let font = NSFont.userFixedPitchFont(ofSize: 11) ?? NSFont.systemFont(ofSize: 11)
+        let attributedLogs = ANSIParser.attributedString(from: display, baseFont: font)
+        alert.accessoryView = Self.makeScrollableText(attributedLogs, width: 520, height: 240)
 
         let response = alert.runModal()
         if response == .alertSecondButtonReturn {
+            // Copie la version texte (sans codes ANSI bruts) au pasteboard.
             let pb = NSPasteboard.general
             pb.clearContents()
-            pb.setString(display, forType: .string)
+            pb.setString(attributedLogs.string, forType: .string)
         }
     }
 
     // MARK: Helpers
 
-    private static func makeScrollableText(_ text: String, width: CGFloat, height: CGFloat) -> NSView {
+    private static func makeScrollableText(_ attributedText: NSAttributedString,
+                                           width: CGFloat, height: CGFloat) -> NSView {
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = false
@@ -1555,8 +1709,6 @@ final class ScriptRunner {
         let textView = NSTextView(frame: scroll.bounds)
         textView.isEditable = false
         textView.isSelectable = true
-        textView.font = NSFont.userFixedPitchFont(ofSize: 11) ?? NSFont.systemFont(ofSize: 11)
-        textView.string = text
         textView.textContainerInset = NSSize(width: 6, height: 6)
         textView.autoresizingMask = [.width]
         textView.minSize = NSSize(width: 0, height: 0)
@@ -1564,6 +1716,7 @@ final class ScriptRunner {
                                   height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        textView.textStorage?.setAttributedString(attributedText)
 
         scroll.documentView = textView
         return scroll
@@ -1695,7 +1848,7 @@ enum TerminalLauncher {
         NSLog("QuickScript: AppleScript Terminal source:\n\(source)")
 
         guard let script = NSAppleScript(source: source) else {
-            presentTerminalError(message: "Source AppleScript invalide.", appName: appName)
+            presentTerminalError(message: "Invalid AppleScript source.", appName: appName)
             return
         }
 
@@ -1704,7 +1857,7 @@ enum TerminalLauncher {
 
         if let err = err {
             NSLog("QuickScript: erreur AppleScript Terminal - \(err)")
-            let message = (err["NSAppleScriptErrorMessage"] as? String) ?? "Erreur AppleScript inconnue."
+            let message = (err["NSAppleScriptErrorMessage"] as? String) ?? "Unknown AppleScript error."
             let number = (err["NSAppleScriptErrorNumber"] as? Int) ?? 0
             presentTerminalError(message: "\(message) (code \(number))", appName: appName)
         }
@@ -1714,17 +1867,17 @@ enum TerminalLauncher {
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
-            alert.messageText = "Impossible d'ouvrir \(appName)"
+            alert.messageText = "Unable to open \(appName)"
             alert.informativeText = """
             \(message)
 
-            Si l'erreur est « \(appName) is not allowed assistance » ou « not authorized », \
-            vérifie l'autorisation dans :
+            If the error is « \(appName) is not allowed assistance » or « not authorized », \
+            check the permission in:
 
-            Réglages Système → Confidentialité et sécurité → Automatisation → QuickScript → \(appName)
+            System Settings → Privacy & Security → Automation → QuickScript → \(appName)
 
-            La case « \(appName) » doit être cochée. Si QuickScript n'apparaît pas du tout, \
-            relance le script une fois ; macOS proposera la permission au premier essai.
+            The « \(appName) » checkbox must be enabled. If QuickScript does not appear at all, \
+            run the script once more; macOS will prompt for permission on the first attempt.
             """
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
@@ -1804,6 +1957,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var runnersByID: [ObjectIdentifier: ScriptRunner] = [:]
     private var logWindows: [UUID: LogWindowController] = [:]
     private var paramEditors: [ParamEditorWindowController] = []
+
+    // Préférence globale : si true, la fenêtre de logs est forcée à s'ouvrir
+    // à chaque lancement de script (peu importe son état précédent).
+    private let alwaysShowLogsKey = "alwaysShowLogsAtRun"
+    private var alwaysShowLogsAtRun: Bool {
+        get { UserDefaults.standard.bool(forKey: alwaysShowLogsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: alwaysShowLogsKey) }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
@@ -1895,7 +2056,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.toolTip = "QuickScript"
         } else {
             button.title = "⚡(\(runningRunners.count))"
-            button.toolTip = "QuickScript — \(runningRunners.count) script(s) en cours"
+            button.toolTip = "QuickScript — \(runningRunners.count) running script(s)"
         }
     }
 
@@ -1908,7 +2069,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let scripts = ScriptStore.shared.scripts
 
         if scripts.isEmpty {
-            let empty = NSMenuItem(title: "Aucun script importé", action: nil, keyEquivalent: "")
+            let empty = NSMenuItem(title: "No scripts added", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
         } else {
@@ -1926,7 +2087,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let submenu = NSMenu()
                 submenu.autoenablesItems = false
 
-                let execute = NSMenuItem(title: "Exécuter",
+                let execute = NSMenuItem(title: "Run",
                                          action: #selector(runScript(_:)),
                                          keyEquivalent: "")
                 execute.target = self
@@ -1935,7 +2096,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                 // Variante affichée tant que la touche Option est maintenue :
                 // exécute dans Terminal.app / iTerm au lieu du mode silencieux.
-                let executeTerminal = NSMenuItem(title: "Exécuter dans le terminal",
+                let executeTerminal = NSMenuItem(title: "Run in terminal",
                                                  action: #selector(runScriptInTerminal(_:)),
                                                  keyEquivalent: "")
                 executeTerminal.target = self
@@ -1944,7 +2105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 executeTerminal.keyEquivalentModifierMask = .option
                 submenu.addItem(executeTerminal)
 
-                let reveal = NSMenuItem(title: "Révéler dans le Finder",
+                let reveal = NSMenuItem(title: "Reveal in Finder",
                                         action: #selector(revealInFinder(_:)),
                                         keyEquivalent: "")
                 reveal.target = self
@@ -1962,28 +2123,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 logsToggle.target = self
                 logsToggle.representedObject = script.id.uuidString
                 logsToggle.toolTip =
-                    "Affiche/cache la fenêtre des logs de ce script. " +
-                    "Les chunks reçus pendant qu'elle est ouverte y sont affichés en direct. " +
-                    "Indépendamment, un fichier .log est toujours créé à chaque lancement."
+                    "Show/hide the logs window for this script. " +
+                    "Chunks received while it is open are displayed live. " +
+                    "A .log file is always created at every launch, regardless."
                 submenu.addItem(logsToggle)
 
                 submenu.addItem(NSMenuItem.separator())
 
-                let editParams = NSMenuItem(title: "Modifier les paramètres…",
+                let editParams = NSMenuItem(title: "Edit parameters…",
                                             action: #selector(editScriptParams(_:)),
                                             keyEquivalent: "")
                 editParams.target = self
                 editParams.representedObject = script.id.uuidString
                 submenu.addItem(editParams)
 
-                let rename = NSMenuItem(title: "Renommer…",
+                let rename = NSMenuItem(title: "Rename…",
                                         action: #selector(renameScript(_:)),
                                         keyEquivalent: "")
                 rename.target = self
                 rename.representedObject = script.id.uuidString
                 submenu.addItem(rename)
 
-                let delete = NSMenuItem(title: "Supprimer",
+                let delete = NSMenuItem(title: "Delete",
                                         action: #selector(deleteScript(_:)),
                                         keyEquivalent: "")
                 delete.target = self
@@ -1997,20 +2158,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let addItem = NSMenuItem(title: "Ajouter un script…",
+        let addItem = NSMenuItem(title: "Add a script…",
                                  action: #selector(addScript),
                                  keyEquivalent: "a")
         addItem.target = self
         menu.addItem(addItem)
 
-        let openJSONItem = NSMenuItem(title: "Ouvrir scripts.json",
+        let openJSONItem = NSMenuItem(title: "Open scripts.json",
                                       action: #selector(openStorageJSON),
                                       keyEquivalent: "")
         openJSONItem.target = self
         menu.addItem(openJSONItem)
 
         // Variante affichée tant que la touche Option est maintenue.
-        let revealJSONItem = NSMenuItem(title: "Afficher scripts.json",
+        let revealJSONItem = NSMenuItem(title: "Show scripts.json",
                                         action: #selector(revealStorageJSON),
                                         keyEquivalent: "")
         revealJSONItem.target = self
@@ -2018,7 +2179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         revealJSONItem.keyEquivalentModifierMask = .option
         menu.addItem(revealJSONItem)
 
-        let refreshItem = NSMenuItem(title: "Actualiser",
+        let refreshItem = NSMenuItem(title: "Refresh",
                                      action: #selector(refreshFromDisk),
                                      keyEquivalent: "r")
         refreshItem.target = self
@@ -2026,7 +2187,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quitter",
+        let alwaysShowItem = NSMenuItem(title: "Always show logs window at run",
+                                        action: #selector(toggleAlwaysShowLogs),
+                                        keyEquivalent: "")
+        alwaysShowItem.target = self
+        alwaysShowItem.state = alwaysShowLogsAtRun ? .on : .off
+        menu.addItem(alwaysShowItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(title: "Quit",
                                   action: #selector(quit),
                                   keyEquivalent: "q")
         quitItem.target = self
@@ -2039,9 +2209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func addScript() {
         let panel = NSOpenPanel()
-        panel.title = "Choisir un ou plusieurs scripts"
-        panel.message = "Sélectionne un ou plusieurs fichiers .sh (Cmd+clic pour plusieurs)."
-        panel.prompt = "Ajouter"
+        panel.title = "Choose one or more scripts"
+        panel.message = "Select one or more .sh files (Cmd+click for multiple)."
+        panel.prompt = "Add"
         panel.allowsMultipleSelection = true
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -2133,7 +2303,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let values = ParamInputDialog.collect(params: params, scriptName: script.name) else {
                 return // annulé par l'utilisateur
             }
-            args = values
+            // Si le nom du @param commence par '-' (ou '--'), c'est un flag :
+            // on passe `-name value`. Sinon, on passe juste la valeur (positionnel).
+            // Pour un flag dont la valeur est vide, on n'émet rien (flag optionnel non utilisé).
+            for (param, value) in zip(params, values) {
+                if param.name.hasPrefix("-") {
+                    if !value.isEmpty {
+                        args.append(param.name)
+                        args.append(value)
+                    }
+                } else {
+                    args.append(value)
+                }
+            }
         }
 
         if openInTerminal {
@@ -2150,6 +2332,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Mode silencieux : PTY interne, capture, alertes. Si une fenêtre de
         // logs est ouverte (ou existe) pour ce script, on s'y attache : les
         // chunks reçus pendant l'exécution y seront affichés en direct.
+        // Si l'option globale « Always show logs window at run » est activée,
+        // on force la création et l'affichage de la fenêtre maintenant.
+        if alwaysShowLogsAtRun {
+            let controller = ensureLogWindow(for: script)
+            if !controller.isShown { controller.show() }
+        }
         let logURL = QSLog.newLogFileURL(for: script)
         let attachedWindow = logWindows[script.id]
         attachedWindow?.attachToRun(logFileURL: logURL)
@@ -2184,16 +2372,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
-        alert.messageText = "Renommer le script"
-        alert.informativeText = "Choisis un nouveau nom d'affichage."
+        alert.messageText = "Rename script"
+        alert.informativeText = "Choose a new display name."
         alert.alertStyle = .informational
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         textField.stringValue = script.name
         alert.accessoryView = textField
         alert.window.initialFirstResponder = textField
-        alert.addButton(withTitle: "Enregistrer")
-        alert.addButton(withTitle: "Annuler")
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let newName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2257,11 +2445,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
-        alert.messageText = "Supprimer ce script ?"
-        alert.informativeText = "« \(script.name) » sera retiré de la liste. Le fichier d'origine ne sera pas supprimé."
+        alert.messageText = "Delete this script?"
+        alert.informativeText = "« \(script.name) » will be removed from the list. The original file will not be deleted."
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Supprimer")
-        alert.addButton(withTitle: "Annuler")
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
 
         if alert.runModal() == .alertFirstButtonReturn {
             // Nettoie la fenêtre de logs associée si elle existe.
@@ -2315,19 +2503,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusIcon()
     }
 
+    @objc private func toggleAlwaysShowLogs() {
+        alwaysShowLogsAtRun.toggle()
+        rebuildMenu()
+    }
+
     // MARK: Script manquant
 
     private func handleMissingScript(_ script: Script) {
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
-        alert.messageText = "Script introuvable"
+        alert.messageText = "Script not found"
         alert.informativeText =
-            "Le fichier n'existe plus à l'emplacement :\n\n\(script.path)\n\nQue souhaites-tu faire ?"
+            "The file no longer exists at:\n\n\(script.path)\n\nWhat would you like to do?"
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Choisir un nouveau chemin…")
-        alert.addButton(withTitle: "Supprimer l'entrée")
-        alert.addButton(withTitle: "Annuler")
+        alert.addButton(withTitle: "Choose a new path…")
+        alert.addButton(withTitle: "Remove entry")
+        alert.addButton(withTitle: "Cancel")
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
@@ -2342,8 +2535,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func relocateScript(_ script: Script) {
         let panel = NSOpenPanel()
-        panel.title = "Choisir le nouvel emplacement de « \(script.name) »"
-        panel.prompt = "Mettre à jour"
+        panel.title = "Choose the new location for « \(script.name) »"
+        panel.prompt = "Update"
         panel.allowsMultipleSelection = false
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -2368,7 +2561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) {
         let files = filePaths(from: pasteboard)
         guard !files.isEmpty else {
-            error.pointee = "Aucun fichier sélectionné." as NSString
+            error.pointee = "No file selected." as NSString
             return
         }
 
@@ -2446,8 +2639,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if scripts.isEmpty {
             let alert = NSAlert()
-            alert.messageText = "Aucun script à exécuter"
-            alert.informativeText = "Ajoute d'abord un script via la barre des menus (« Ajouter un script… »)."
+            alert.messageText = "No scripts to run"
+            alert.informativeText = "Add a script first via the menu bar (« Add a script… »)."
             alert.alertStyle = .informational
             alert.addButton(withTitle: "OK")
             _ = alert.runModal()
@@ -2456,19 +2649,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Lancer")
-        alert.addButton(withTitle: "Annuler")
+        alert.addButton(withTitle: "Run")
+        alert.addButton(withTitle: "Cancel")
 
         if let context = contextPath {
-            alert.messageText = "Exécuter un script ici"
+            alert.messageText = "Run a script here"
             alert.informativeText =
-                "Le script aura accès au dossier via $QS_CONTEXT_TARGET_PATH :\n\n\(context)"
+                "The script will access the folder via $QS_CONTEXT_TARGET_PATH:\n\n\(context)"
         } else {
-            alert.messageText = "Exécuter un script"
+            alert.messageText = "Run a script"
             let fileLabel = files.count == 1
-                ? "le fichier sélectionné"
-                : "les \(files.count) fichiers sélectionnés"
-            var detail = "Le script aura accès à \(fileLabel) via $QS_CONTEXT_FILE_PATH."
+                ? "the selected file"
+                : "the \(files.count) selected files"
+            var detail = "The script will access \(fileLabel) via $QS_CONTEXT_FILE_PATH."
             if files.count <= 4 {
                 detail += "\n\n" + files.map { "• \(($0 as NSString).lastPathComponent)" }.joined(separator: "\n")
             }

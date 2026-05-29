@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key>
-    <string>fr_FR</string>
+    <string>en</string>
     <key>CFBundleExecutable</key>
     <string>QuickScript</string>
     <key>CFBundleIdentifier</key>
@@ -31,14 +31,14 @@
     <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>QuickScript demande au Finder le dossier en cours d'affichage pour y exécuter un script via le menu contextuel.</string>
+    <string>QuickScript asks Finder for the folder currently displayed in order to run a script via the contextual menu.</string>
     <key>NSServices</key>
     <array>
         <dict>
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>Exécuter avec QuickScript…</string>
+                <string>Run with QuickScript…</string>
             </dict>
             <key>NSMessage</key>
             <string>runWithQuickScript</string>
@@ -55,20 +55,20 @@
                 <string>public.item</string>
             </dict>
             <key>NSServiceDescription</key>
-            <string>Exécute un script QuickScript sur les fichiers sélectionnés.</string>
+            <string>Runs a QuickScript script on the selected files.</string>
         </dict>
         <dict>
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>Exécuter avec QuickScript ici…</string>
+                <string>Run with QuickScript here…</string>
             </dict>
             <key>NSMessage</key>
             <string>runWithQuickScriptInContext</string>
             <key>NSPortName</key>
             <string>QuickScript</string>
             <key>NSServiceDescription</key>
-            <string>Exécute un script QuickScript dans le dossier actuellement ouvert dans le Finder.</string>
+            <string>Runs a QuickScript script in the folder currently open in Finder.</string>
         </dict>
     </array>
 </dict>

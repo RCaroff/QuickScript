@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 #
-# Démontre les prompts stdin captés au runtime par QuickScript.
-# Aucune directive @param ici : le script demande tout à l'exécution.
+# Demonstrates stdin prompts captured at runtime by QuickScript.
+# No @param directive here: the script asks for everything at execution.
 #
 set -euo pipefail
 
-read -rp "Comment t'appelles-tu ? " name
-read -rp "Quel âge as-tu ? " age
-read -rp "Confirmer ? (o/n) " confirm
+read -rp "What's your name? " name
+read -rp "How old are you? " age
+read -rp "Confirm? (y/n) " confirm
 
-if [[ "$confirm" != "o" ]]; then
-    echo "Annulé par l'utilisateur." >&2
+if [[ "$confirm" != "y" ]]; then
+    echo "Cancelled by user." >&2
     exit 2
 fi
 
-echo "Bonjour $name, tu as $age ans."
+echo "Hello $name, you are $age years old."
