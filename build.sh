@@ -4,7 +4,7 @@
 #
 # Usage :
 #   ./build.sh             # build dans ./build/QuickScript.app
-#   ./build.sh --install   # build puis copie dans ~/Applications/
+#   ./build.sh --install   # build puis copie dans ~/Applications/ ET /Applications
 #   ./build.sh --run       # build puis ouvre l'app
 #
 set -euo pipefail
@@ -49,6 +49,15 @@ if [ -d "icon/AppIcon.iconset" ] && command -v iconutil >/dev/null 2>&1; then
     iconutil -c icns icon/AppIcon.iconset -o "${RESOURCES_DIR}/AppIcon.icns"
 fi
 
+# Icône menu bar (template image) : copiée telle quelle dans Resources/.
+# NSImage(named: "menu-icon") trouve les variantes @2x et @3x via la convention de nommage.
+if [ -f "icon/menu-icon.png" ]; then
+    echo "▸ Copie de l'icône menu bar…"
+    cp icon/menu-icon.png "${RESOURCES_DIR}/menu-icon.png"
+    [ -f "icon/menu-icon@2x.png" ] && cp icon/menu-icon@2x.png "${RESOURCES_DIR}/menu-icon@2x.png"
+    [ -f "icon/menu-icon@3x.png" ] && cp icon/menu-icon@3x.png "${RESOURCES_DIR}/menu-icon@3x.png"
+fi
+
 # Signature ad-hoc pour éviter le quarantine sur certaines configs
 echo "▸ Signature ad-hoc…"
 codesign --force --sign - "$APP_BUNDLE" 2>/dev/null || true
@@ -69,11 +78,22 @@ refresh_services() {
 for arg in "$@"; do
     case "$arg" in
         --install)
-            DEST="$HOME/Applications"
-            mkdir -p "$DEST"
-            rm -rf "${DEST}/${APP_NAME}.app"
-            cp -R "$APP_BUNDLE" "$DEST/"
-            echo "📦 Installé dans : ${DEST}/${APP_NAME}.app"
+            # Installe dans ~/Applications (sans sudo)
+            USER_DEST="$HOME/Applications"
+            mkdir -p "$USER_DEST"
+            rm -rf "${USER_DEST}/${APP_NAME}.app"
+            cp -R "$APP_BUNDLE" "$USER_DEST/"
+            echo "📦 Installé dans : ${USER_DEST}/${APP_NAME}.app"
+
+            # Installe aussi dans /Applications (Macintosh HD) — écrase l'existant.
+            # Nécessite sudo car /Applications est protégé. macOS demande le
+            # mot de passe via prompt -p ; il suffit de l'entrer une fois.
+            SYSTEM_DEST="/Applications"
+            echo "▸ Installation dans ${SYSTEM_DEST} (sudo requis)…"
+            sudo rm -rf "${SYSTEM_DEST}/${APP_NAME}.app"
+            sudo cp -R "$APP_BUNDLE" "$SYSTEM_DEST/"
+            echo "📦 Installé dans : ${SYSTEM_DEST}/${APP_NAME}.app"
+
             refresh_services
             ;;
         --run)

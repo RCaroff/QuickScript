@@ -6,7 +6,19 @@
 	<dict>
 		<key>Resources/AppIcon.icns</key>
 		<data>
-		5XOXwJopNTfFyE1j1oOwoqM/rKs=
+		XQq939br3dOpqKAn5Dt2wbd44Sk=
+		</data>
+		<key>Resources/menu-icon.png</key>
+		<data>
+		pQkW3Xnj45qkJ4QGFd8JanN0ymQ=
+		</data>
+		<key>Resources/menu-icon@2x.png</key>
+		<data>
+		wCa0Fikn+ZFiO6tqUhLY9xTEdU4=
+		</data>
+		<key>Resources/menu-icon@3x.png</key>
+		<data>
+		XVFWpl/8mwCGykpcnHNYdSYC0iM=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -15,7 +27,28 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			dX1/a6qp/StMQOt4nx9RV12Ag2hJ9kAgNQSeHR7VYVI=
+			EfTiHPROiTZwyTm/xRQAWnI9KyS4vpcVaaqwQK9oI+A=
+			</data>
+		</dict>
+		<key>Resources/menu-icon.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			iuEgqlURrTXBKRRxksiGUpyKgUtJUXF9mCg7r4T+/m8=
+			</data>
+		</dict>
+		<key>Resources/menu-icon@2x.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			2Ge65JgR6jnSSez7csDllX+F1xUv3bULdWu1Zi++RZE=
+			</data>
+		</dict>
+		<key>Resources/menu-icon@3x.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			cjATgxRF4OOg+GEN4d5KjMxDqC33dBnfiPJdEsxInpI=
 			</data>
 		</dict>
 	</dict>

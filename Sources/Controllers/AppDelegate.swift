@@ -110,13 +110,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusIcon() {
         guard let button = statusItem.button else { return }
-        if runningRunners.isEmpty {
-            button.title = "⚡"
-            button.toolTip = "QuickScript"
-        } else {
-            button.title = "⚡(\(runningRunners.count))"
-            button.toolTip = "QuickScript — \(runningRunners.count) running script(s)"
+
+        // Charge l'icône menu bar (template image) — macOS la recolore
+        // automatiquement selon le thème clair/sombre. Taille des icônes
+        // menu bar : 18 points de hauteur (convention macOS) ; la largeur
+        // suit le ratio natif du PNG (2:1 → 36 points).
+        if button.image == nil, let image = NSImage(named: "menu-icon") {
+            image.isTemplate = true
+            let aspect = image.size.width / max(image.size.height, 1)
+            image.size = NSSize(width: 18 * aspect, height: 18)
+            button.image = image
+            button.imagePosition = .imageLeft
         }
+
+        // Fallback texte si l'icône n'est pas chargée (dev / build sans Resources).
+        if button.image == nil {
+            button.title = runningRunners.isEmpty
+                ? "⚡"
+                : "⚡ (\(runningRunners.count))"
+        } else {
+            // Avec l'image chargée, le titre n'affiche que le badge de compteur.
+            button.title = runningRunners.isEmpty
+                ? ""
+                : " (\(runningRunners.count))"
+        }
+
+        button.toolTip = runningRunners.isEmpty
+            ? "QuickScript"
+            : "QuickScript — \(runningRunners.count) running script(s)"
     }
 
     // MARK: Menu
