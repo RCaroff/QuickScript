@@ -153,6 +153,64 @@ JSON lisible et éditable à la main si besoin.
 
 Tous sont lancés via `/usr/bin/env`, donc tout interpréteur trouvable dans le `PATH` hérité de l'app fonctionnera.
 
+## Serveur MCP — piloter QuickScript depuis une IA
+
+QuickScript expose un serveur **MCP (Model Context Protocol)** permettant à une
+IA (ex : Claude) d'ajouter, modifier et lancer des scripts. Deux transports sont
+disponibles :
+
+- **stdio** (recommandé pour Claude Desktop) : le client lance le binaire en mode
+  headless, aucune UI. Activé par l'argument `--mcp-stdio`.
+- **HTTP local** (Streamable HTTP, loopback `127.0.0.1`) : activable depuis le
+  menu de la barre de statut (*Enable MCP server*), port réglable via
+  *Configure MCP port…* (défaut `8765`).
+
+Outils exposés : `list_scripts`, `add_script`, `update_params`, `run_script`.
+
+### Brancher Claude Desktop (mode stdio)
+
+1. Installer l'app : `./build.sh --install` (le binaire doit être à
+   `/Applications/QuickScript.app/Contents/MacOS/QuickScript`).
+
+2. Ouvrir la config via **Claude Desktop → Réglages → Developer → Edit Config**
+   (c'est ce fichier qui fait foi), puis y ajouter la clé `mcpServers` **au
+   niveau racine**, sans toucher au reste du contenu existant :
+
+   ```json
+   {
+     "mcpServers": {
+       "quickscript": {
+         "command": "/Applications/QuickScript.app/Contents/MacOS/QuickScript",
+         "args": ["--mcp-stdio"]
+       }
+     }
+   }
+   ```
+
+3. **Quitter complètement Claude Desktop (Cmd+Q)** puis le relancer — la config
+   n'est lue qu'au démarrage ; fermer la fenêtre ne suffit pas.
+
+4. Les outils apparaissent dans **Developer** et via l'icône outils de la zone de
+   saisie. Un serveur stdio local **n'apparaît pas** dans la page « Connecteurs »
+   (réservée aux connecteurs distants/OAuth).
+
+En mode stdio, `run_script` s'exécute de façon synchrone et renvoie
+`exitCode` / `stdout` / `stderr` à l'IA (le mode terminal n'y est pas disponible).
+Le store `scripts.json` est partagé avec une éventuelle instance GUI ; après un
+ajout via l'IA, cliquer *Refresh* dans le menu pour rafraîchir l'affichage.
+
+### Dépannage
+
+- **Vérifier que le serveur répond** :
+  ```bash
+  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    | "/Applications/QuickScript.app/Contents/MacOS/QuickScript" --mcp-stdio
+  ```
+  doit renvoyer une ligne JSON contenant `"serverInfo"`.
+- **Valider le JSON de config** : `python3 -m json.tool < "$HOME/Library/Application Support/Claude/claude_desktop_config.json"`
+  (une virgule en trop bloque silencieusement tout le chargement).
+- **Logs côté client** : `~/Library/Logs/Claude/mcp.log`.
+
 ## Pistes pour la suite
 
 - Raccourcis clavier globaux par script

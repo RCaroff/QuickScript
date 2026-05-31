@@ -115,9 +115,86 @@ Un fichier = une responsabilité. Les sections internes restent délimitées par
 
 Pattern important : **alternate Option** = duo de menu items avec le même `keyEquivalent` et le 2e a `isAlternate=true` + `keyEquivalentModifierMask=.option`. AppKit swap automatiquement la visibilité.
 
+### Serveur MCP
+
+QuickScript expose un serveur **MCP (Model Context Protocol)** pour qu'une IA
+puisse piloter l'app, via **deux transports** partageant le même cœur :
+
+- `Controllers/MCPCore.swift` — logique protocolaire JSON-RPC **indépendante du
+  transport** (`initialize`, `ping`, `tools/list`, `tools/call` + définitions
+  d'outils). Délègue à un `MCPToolHost`. Flag `dispatchToMain` : `true` pour le
+  host GUI (exécution sur le main thread), `false` en headless.
+- `Controllers/MCPServer.swift` — transport **Streamable HTTP** (POST JSON-RPC)
+  via `Network.framework` (`NWListener`), `127.0.0.1:<port>` (loopback, défaut
+  `8765`). Host = `AppDelegate` (menu live). Pas de SSE.
+- `Controllers/MCPStdioServer.swift` — transport **stdio** (JSON délimité par
+  sauts de ligne sur stdin/stdout, logs sur stderr). Host =
+  `Controllers/HeadlessMCPHost.swift`, **sans AppKit**. Activé via l'argument
+  `--mcp-stdio` (branché dans `main.swift` avant tout démarrage d'UI).
+
+**Transport HTTP (mode GUI)** — Activation via le menu : *Enable MCP server*
+(toggle persisté dans `UserDefaults`, clés `mcpServerEnabled` / `mcpServerPort`).
+Démarré au boot si activé. En cas d'échec (port pris), le toggle se désactive et
+une alerte s'affiche (`onFailure`). Le port se règle via *Configure MCP port…*
+(`configureMCPPort`, NSAlert + NSTextField, valide 1024–65535) ; si le serveur
+tournait, il redémarre sur le nouveau port.
+
+**Transport stdio (mode headless)** — Le client lance
+`QuickScript.app/Contents/MacOS/QuickScript --mcp-stdio`. Aucune UI. Le host
+opère directement sur `scripts.json` (rechargé à chaque appel pour cohérence
+avec une instance GUI éventuelle) et exécute `run_script` de façon **synchrone**
+via `Process`, en renvoyant `exitCode` / `stdout` / `stderr` à l'IA (le mode
+terminal n'y est pas disponible).
+
+**Brancher Claude Desktop (procédure validée)** — le fichier de config est
+`~/Library/Application Support/Claude/claude_desktop_config.json`, mais sur les
+builds Cowork ce fichier contient aussi des préférences de l'app (`preferences`,
+`coworkUserFilesPath`, …). Il faut **ajouter** la clé `mcpServers` au niveau
+racine sans toucher au reste :
+```json
+{
+  "mcpServers": {
+    "quickscript": {
+      "command": "/Applications/QuickScript.app/Contents/MacOS/QuickScript",
+      "args": ["--mcp-stdio"]
+    }
+  }
+}
+```
+Points qui nous ont fait perdre du temps :
+1. Éditer le fichier **via Réglages → Developer → Edit Config** (c'est lui qui
+   fait foi ; un autre `claude_desktop_config.json` ailleurs ne sera pas lu).
+2. **Cmd+Q complet** sur Claude Desktop puis relance — la config n'est lue
+   qu'au démarrage ; fermer la fenêtre ne suffit pas.
+3. Un serveur stdio local **n'apparaît pas** dans la page « Connecteurs » (réservée
+   aux connecteurs distants/OAuth) : il apparaît dans **Developer** et via l'icône
+   outils de la zone de saisie.
+4. Vérifier le JSON : `python3 -m json.tool < <fichier>` (une virgule en trop
+   bloque tout le chargement, silencieusement).
+5. Tester le binaire seul :
+   `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | "/Applications/QuickScript.app/Contents/MacOS/QuickScript" --mcp-stdio`
+   doit renvoyer une ligne JSON avec `serverInfo`. Logs côté client :
+   `~/Library/Logs/Claude/mcp.log`.
+
+Outils exposés (`tools/list`, `tools/call`), identiques sur les deux transports :
+- `list_scripts` — id, nom, chemin, `@param` détectés
+- `add_script` — écrit un `.sh` dans `~/Library/.../QuickScript/scripts/`
+  (`QSLog.uniqueScriptFileURL`), chmod 755, injecte les `@param` via
+  `ParamSerializer`, enregistre dans le store + `rebuildMenu()`
+- `update_params` — réécrit les `@param` d'un script existant (id ou nom)
+- `run_script` — lance un script avec des valeurs de params, sans dialogue
+
+`AppDelegate` implémente `MCPToolHost`. **Toutes les méthodes du host sont
+appelées sur le main thread** (le serveur fait `DispatchQueue.main.sync` depuis
+sa queue réseau) car elles touchent à `ScriptStore`, au menu et au lancement.
+Le lancement programmatique passe par `launch(... presetValues:)` qui contourne
+`ParamInputDialog` : chaque param prend `presetValues[name] ?? defaultValue ?? ""`.
+
+Build : `build.sh` ajoute `-framework Network`.
+
 ### Lancement d'un script
 
-Point d'entrée unique : `AppDelegate.launch(script:contextFiles:contextPath:openInTerminal:)`
+Point d'entrée unique : `AppDelegate.launch(script:contextFiles:contextPath:openInTerminal:presetValues:)`
 
 1. Vérifie l'existence du fichier (sinon `handleMissingScript`)
 2. Parse les `@param` du script et affiche `ParamInputDialog.collect(...)` s'il y en a

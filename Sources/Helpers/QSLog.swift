@@ -25,6 +25,37 @@ enum QSLog {
         return dir
     }
 
+    /// Dossier dédié aux scripts créés via le serveur MCP (`add_script`).
+    /// `~/Library/Application Support/QuickScript/scripts/`
+    static func scriptsFolder() -> URL {
+        let fm = FileManager.default
+        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport
+            .appendingPathComponent("QuickScript", isDirectory: true)
+            .appendingPathComponent("scripts", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Renvoie une URL de fichier `.sh` libre dans le dossier `scripts/`,
+    /// dérivée d'un nom lisible et sanitisé. Évite les collisions en suffixant
+    /// `-2`, `-3`, … si besoin.
+    static func uniqueScriptFileURL(forName name: String) -> URL {
+        let dir = scriptsFolder()
+        var base = sanitized(name)
+        if base.hasSuffix(".sh") { base = String(base.dropLast(3)) }
+        if base.isEmpty { base = "script" }
+
+        let fm = FileManager.default
+        var candidate = dir.appendingPathComponent("\(base).sh")
+        var counter = 2
+        while fm.fileExists(atPath: candidate.path) {
+            candidate = dir.appendingPathComponent("\(base)-\(counter).sh")
+            counter += 1
+        }
+        return candidate
+    }
+
     static func baseDirectory() -> URL {
         let fm = FileManager.default
         let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!

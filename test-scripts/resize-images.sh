@@ -2,14 +2,17 @@
 #
 # Redimensionne les images sélectionnées dans le Finder via QuickScript.
 #
-# Source des images :
-#   - $QS_CONTEXT_FILE_PATH (un chemin par ligne) — alimenté par la
-#     Quick Action « Exécuter avec QuickScript… » du menu contextuel
-#     Finder, sur une sélection de fichiers.
+# Source des images, par ordre de priorité :
+#   1. @param path                    (rempli dans le dialog QuickScript)
+#   2. $QS_CONTEXT_FILE_PATH          (Quick Action « Exécuter avec
+#                                      QuickScript… » sur sélection Finder ;
+#                                      un chemin par ligne)
 #
 # Paramètres :
 #   - width  : largeur cible en pixels  (laisser vide pour conserver le ratio)
 #   - height : hauteur cible en pixels  (laisser vide pour conserver le ratio)
+#   - path   : chemin explicite d'une image (vide = utilise
+#              $QS_CONTEXT_FILE_PATH)
 #
 # Au moins l'un des deux doit être renseigné. Si un seul est fourni, sips
 # conserve le ratio en calculant l'autre côté.
@@ -21,11 +24,13 @@
 #
 # @param width  Largeur cible en pixels (vide = ratio conservé)
 # @param height  Hauteur cible en pixels (vide = ratio conservé)
+# @param path  Chemin de l'image (vide = sélection Finder)
 #
 set -euo pipefail
 
 width="${1:-}"
 height="${2:-}"
+path_param="${3:-}"
 
 # --- Validation des paramètres ---------------------------------------------
 
@@ -47,10 +52,17 @@ fi
 
 # --- Résolution des fichiers à traiter -------------------------------------
 
-if [[ -z "${QS_CONTEXT_FILE_PATH:-}" ]]; then
+# Si l'utilisateur a fourni un path explicite via le dialog, on l'utilise
+# (une seule image). Sinon on retombe sur $QS_CONTEXT_FILE_PATH (multi-ligne).
+if [[ -n "$path_param" ]]; then
+    source_list="$path_param"
+elif [[ -n "${QS_CONTEXT_FILE_PATH:-}" ]]; then
+    source_list="$QS_CONTEXT_FILE_PATH"
+else
     echo "Erreur : aucune image reçue." >&2
-    echo "Sélectionne une ou plusieurs images dans le Finder puis lance le" >&2
-    echo "script via « Exécuter avec QuickScript… » du menu contextuel." >&2
+    echo "Sélectionne une ou plusieurs images dans le Finder et lance le" >&2
+    echo "script via « Exécuter avec QuickScript… », ou remplis le" >&2
+    echo "paramètre path dans le dialog." >&2
     exit 1
 fi
 
@@ -77,6 +89,9 @@ failed=0
 
 while IFS= read -r src; do
     [[ -z "$src" ]] && continue
+
+    # Expansion ~ → $HOME pour les paths saisis à la main.
+    src="${src/#\~/$HOME}"
 
     if [[ ! -f "$src" ]]; then
         echo "Ignoré (introuvable) : $src" >&2
@@ -119,7 +134,7 @@ while IFS= read -r src; do
         echo "  ✗ échec sips" >&2
         failed=$((failed + 1))
     fi
-done <<< "$QS_CONTEXT_FILE_PATH"
+done <<< "$source_list"
 
 echo ""
 echo "Traitées : $processed"

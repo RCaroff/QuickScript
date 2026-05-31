@@ -16,6 +16,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var logWindows: [UUID: LogWindowController] = [:]
     private var paramEditors: [ParamEditorWindowController] = []
 
+    // Serveur MCP : permet à une IA d'ajouter/éditer/lancer des scripts.
+    private var mcpServer: MCPServer?
+    private let mcpEnabledKey = "mcpServerEnabled"
+    private let mcpPortKey = "mcpServerPort"
+    private var mcpEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: mcpEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: mcpEnabledKey) }
+    }
+    private var mcpPort: UInt16 {
+        get {
+            let stored = UInt16(UserDefaults.standard.integer(forKey: mcpPortKey))
+            return stored == 0 ? 8765 : stored
+        }
+        set { UserDefaults.standard.set(Int(newValue), forKey: mcpPortKey) }
+    }
+
     // Préférence globale : si true, la fenêtre de logs est forcée à s'ouvrir
     // à chaque lancement de script (peu importe son état précédent).
     private let alwaysShowLogsKey = "alwaysShowLogsAtRun"
@@ -42,6 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Enregistre l'app comme fournisseur du Service déclaré dans Info.plist.
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
+
+        if mcpEnabled { startMCPServer() }
     }
 
     /// Installe un menu principal invisible (LSUIElement masque l'affichage)
@@ -281,6 +299,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let mcpRunning = mcpServer?.isRunning ?? false
+        let mcpTitle = mcpEnabled
+            ? "MCP server: on (127.0.0.1:\(mcpPort))"
+            : "Enable MCP server"
+        let mcpItem = NSMenuItem(title: mcpTitle,
+                                 action: #selector(toggleMCPServer),
+                                 keyEquivalent: "")
+        mcpItem.target = self
+        mcpItem.state = mcpEnabled ? .on : .off
+        mcpItem.toolTip = mcpRunning || !mcpEnabled
+            ? "Expose un serveur MCP local (Streamable HTTP) pour qu'une IA puisse ajouter, éditer et lancer des scripts."
+            : "MCP activé mais serveur non démarré (voir logs)."
+        menu.addItem(mcpItem)
+
+        let mcpPortItem = NSMenuItem(title: "Configure MCP port…",
+                                     action: #selector(configureMCPPort),
+                                     keyEquivalent: "")
+        mcpPortItem.target = self
+        menu.addItem(mcpPortItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let quitItem = NSMenuItem(title: "Quit",
                                   action: #selector(quit),
                                   keyEquivalent: "q")
@@ -368,10 +408,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   (un chemin par ligne).
     /// - `contextPath` (Quick Action « ici ») : exposé via `$QS_CONTEXT_TARGET_PATH`.
     /// - `openInTerminal` : `true` → Terminal/iTerm prend le relais ; sinon PTY silencieux.
+    /// - `presetValues` : si fourni (lancement programmatique via MCP), les
+    ///   valeurs des `@param` sont prises ici (clé = nom du param) au lieu
+    ///   d'afficher `ParamInputDialog`. Un param absent prend sa valeur par
+    ///   défaut, ou la chaîne vide.
     private func launch(script: Script,
                         contextFiles: [String] = [],
                         contextPath: String? = nil,
-                        openInTerminal: Bool = false) {
+                        openInTerminal: Bool = false,
+                        presetValues: [String: String]? = nil) {
         if !FileManager.default.fileExists(atPath: script.path) {
             handleMissingScript(script)
             return
@@ -381,8 +426,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         var args: [String] = []
         if !params.isEmpty {
-            guard let values = ParamInputDialog.collect(params: params, scriptName: script.name) else {
-                return
+            let values: [String]
+            if let preset = presetValues {
+                values = params.map { preset[$0.name] ?? $0.defaultValue ?? "" }
+            } else {
+                guard let collected = ParamInputDialog.collect(params: params, scriptName: script.name) else {
+                    return
+                }
+                values = collected
             }
             // Si le nom du @param commence par '-' (ou '--'), c'est un flag :
             // on passe `-name value`. Sinon, on passe juste la valeur (positionnel).
@@ -596,6 +647,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    // MARK: Serveur MCP
+
+    @objc private func toggleMCPServer() {
+        mcpEnabled.toggle()
+        if mcpEnabled {
+            startMCPServer()
+        } else {
+            mcpServer?.stop()
+            mcpServer = nil
+        }
+        rebuildMenu()
+    }
+
+    @objc private func configureMCPPort() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Port du serveur MCP"
+        alert.informativeText = "Numéro de port pour le serveur MCP local (1024–65535). " +
+            "S'il est en cours d'exécution, il sera redémarré sur le nouveau port."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = String(mcpPort)
+        field.placeholderString = "8765"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let trimmed = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard let value = Int(trimmed), (1024...65535).contains(value) else {
+            let err = NSAlert()
+            err.messageText = "Port invalide"
+            err.informativeText = "Entrez un nombre entre 1024 et 65535."
+            err.alertStyle = .warning
+            err.runModal()
+            return
+        }
+
+        let newPort = UInt16(value)
+        guard newPort != mcpPort else { return }
+        mcpPort = newPort
+
+        // Redémarre le serveur s'il était actif, pour prendre le nouveau port.
+        if mcpEnabled {
+            startMCPServer()
+        }
+        rebuildMenu()
+    }
+
+    private func startMCPServer() {
+        mcpServer?.stop()
+        let server = MCPServer(port: mcpPort, host: self)
+        server.onFailure = { [weak self] message in
+            // Échec (port pris, etc.) : on désactive et on prévient.
+            self?.mcpEnabled = false
+            self?.mcpServer = nil
+            self?.rebuildMenu()
+            let alert = NSAlert()
+            alert.messageText = "Serveur MCP non démarré"
+            alert.informativeText = message
+            alert.alertStyle = .warning
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
+        mcpServer = server
+        server.start()
+        // Le state ready arrive de façon asynchrone ; on rafraîchit le menu peu après.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.rebuildMenu()
+        }
+    }
+
     // MARK: Script manquant
 
     private func handleMissingScript(_ script: Script) {
@@ -766,5 +893,119 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let idx = popup.indexOfSelectedItem
         guard idx >= 0 && idx < scripts.count else { return }
         launch(script: scripts[idx], contextFiles: files, contextPath: contextPath)
+    }
+}
+
+// ============================================================================
+// MARK: - MCPToolHost
+// ============================================================================
+
+extension AppDelegate: MCPToolHost {
+
+    /// Résout un script par UUID (si `target` est un UUID valide) sinon par nom.
+    private func resolveScript(_ target: String?) -> Script? {
+        guard let target = target, !target.isEmpty else { return nil }
+        if let uuid = UUID(uuidString: target), let s = ScriptStore.shared.script(for: uuid) {
+            return s
+        }
+        return ScriptStore.shared.scripts.first { $0.name == target }
+    }
+
+    /// Convertit la représentation JSON d'un paramètre en `ScriptParam`.
+    private func scriptParam(from dict: [String: Any]) -> ScriptParam? {
+        guard let name = (dict["name"] as? String)?.trimmingCharacters(in: .whitespaces),
+              !name.isEmpty else { return nil }
+        let def = (dict["default"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let desc = (dict["description"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return ScriptParam(name: name, defaultValue: def, description: desc)
+    }
+
+    private func paramJSON(_ p: ScriptParam) -> [String: Any] {
+        var d: [String: Any] = ["name": p.name]
+        if let v = p.defaultValue { d["default"] = v }
+        if let v = p.description { d["description"] = v }
+        return d
+    }
+
+    private func scriptJSON(_ s: Script) -> [String: Any] {
+        let params = ScriptHeaderParser.parseParams(scriptPath: s.path)
+        return [
+            "id": s.id.uuidString,
+            "name": s.name,
+            "path": s.path,
+            "exists": FileManager.default.fileExists(atPath: s.path),
+            "params": params.map(paramJSON)
+        ]
+    }
+
+    func mcpListScripts() -> MCPToolOutcome {
+        let scripts = ScriptStore.shared.scripts.map(scriptJSON)
+        return .ok(["scripts": scripts, "count": scripts.count])
+    }
+
+    func mcpAddScript(name: String?, content: String?, params: [[String: Any]]) -> MCPToolOutcome {
+        guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+            return .error("Le champ 'name' est requis.")
+        }
+        guard let content = content, !content.isEmpty else {
+            return .error("Le champ 'content' est requis.")
+        }
+
+        let url = QSLog.uniqueScriptFileURL(forName: name)
+        do {
+            try content.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            return .error("Écriture du fichier impossible : \(error.localizedDescription)")
+        }
+
+        // Rend le script exécutable.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+
+        // Injecte les @param dans l'en-tête.
+        let parsed = params.compactMap(scriptParam(from:))
+        if !parsed.isEmpty {
+            _ = ParamSerializer.write(parsed, toScriptAt: url.path)
+        }
+
+        let script = Script(name: name, path: url.path)
+        ScriptStore.shared.add(script)
+        rebuildMenu()
+
+        return .ok([
+            "ok": true,
+            "script": scriptJSON(script)
+        ])
+    }
+
+    func mcpUpdateParams(target: String?, params: [[String: Any]]) -> MCPToolOutcome {
+        guard let script = resolveScript(target) else {
+            return .error("Script introuvable pour : \(target ?? "(vide)")")
+        }
+        guard FileManager.default.fileExists(atPath: script.path) else {
+            return .error("Le fichier du script n'existe plus : \(script.path)")
+        }
+        let parsed = params.compactMap(scriptParam(from:))
+        guard ParamSerializer.write(parsed, toScriptAt: script.path) else {
+            return .error("Échec de la réécriture des @param dans le fichier.")
+        }
+        return .ok([
+            "ok": true,
+            "script": scriptJSON(script)
+        ])
+    }
+
+    func mcpRunScript(target: String?, values: [String: String], inTerminal: Bool) -> MCPToolOutcome {
+        guard let script = resolveScript(target) else {
+            return .error("Script introuvable pour : \(target ?? "(vide)")")
+        }
+        guard FileManager.default.fileExists(atPath: script.path) else {
+            return .error("Le fichier du script n'existe plus : \(script.path)")
+        }
+        launch(script: script, openInTerminal: inTerminal, presetValues: values)
+        return .ok([
+            "ok": true,
+            "launched": script.name,
+            "mode": inTerminal ? "terminal" : "silent"
+        ])
     }
 }

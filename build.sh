@@ -35,6 +35,7 @@ echo "▸ Compilation Swift…"
 SOURCE_FILES=$(find Sources -name "*.swift" 2>/dev/null)
 swiftc -O \
     -framework Cocoa \
+    -framework Network \
     -o "${MACOS_DIR}/${APP_NAME}" \
     main.swift $SOURCE_FILES
 
@@ -74,6 +75,32 @@ refresh_services() {
     # killall Finder 2>/dev/null || true
 }
 
+# macOS met l'icône en cache (LaunchServices + iconservices). Quand on remplace
+# une app déjà installée, Finder/Dock continuent souvent d'afficher l'ancienne
+# icône (ou la générique). On force la redécouverte du bundle et on relance Dock
+# + Finder pour qu'ils relisent l'AppIcon.icns.
+#   $1 = chemin du .app installé
+#   $2 = "sudo" si l'opération nécessite les droits root (cas /Applications)
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+refresh_icon_cache() {
+    local dest="$1"
+    local maybe_sudo="${2:-}"
+    echo "▸ Invalidation du cache d'icônes pour ${dest}…"
+    # Bump la date de modif du bundle : signal à LaunchServices que ça a changé.
+    ${maybe_sudo} touch "$dest" 2>/dev/null || true
+    # Ré-enregistre le bundle auprès de LaunchServices.
+    if [ -x "$LSREGISTER" ]; then
+        ${maybe_sudo} "$LSREGISTER" -f "$dest" 2>/dev/null || true
+    fi
+}
+
+# Relance Dock et Finder une seule fois en fin d'install pour repeindre l'icône.
+restart_ui_services() {
+    echo "▸ Relance de Dock et Finder (rafraîchit l'affichage de l'icône)…"
+    killall Dock 2>/dev/null || true
+    killall Finder 2>/dev/null || true
+}
+
 # Options
 for arg in "$@"; do
     case "$arg" in
@@ -84,6 +111,7 @@ for arg in "$@"; do
             rm -rf "${USER_DEST}/${APP_NAME}.app"
             cp -R "$APP_BUNDLE" "$USER_DEST/"
             echo "📦 Installé dans : ${USER_DEST}/${APP_NAME}.app"
+            refresh_icon_cache "${USER_DEST}/${APP_NAME}.app"
 
             # Installe aussi dans /Applications (Macintosh HD) — écrase l'existant.
             # Nécessite sudo car /Applications est protégé. macOS demande le
@@ -93,8 +121,10 @@ for arg in "$@"; do
             sudo rm -rf "${SYSTEM_DEST}/${APP_NAME}.app"
             sudo cp -R "$APP_BUNDLE" "$SYSTEM_DEST/"
             echo "📦 Installé dans : ${SYSTEM_DEST}/${APP_NAME}.app"
+            refresh_icon_cache "${SYSTEM_DEST}/${APP_NAME}.app" "sudo"
 
             refresh_services
+            restart_ui_services
             ;;
         --run)
             echo "🚀 Lancement…"
