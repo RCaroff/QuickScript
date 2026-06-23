@@ -18,34 +18,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Serveur MCP : permet à une IA d'ajouter/éditer/lancer des scripts.
     private var mcpServer: MCPServer?
-    private let mcpEnabledKey = "mcpServerEnabled"
-    private let mcpPortKey = "mcpServerPort"
+
+    // Toutes les préférences sont persistées dans `config.json` via
+    // `ConfigStore.shared.preferences` (et non plus dans les UserDefaults).
+    // Ces accesseurs gardent les mêmes noms qu'avant pour limiter les changements
+    // au reste de la classe.
     private var mcpEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: mcpEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: mcpEnabledKey) }
+        get { ConfigStore.shared.preferences.mcpServerEnabled }
+        set { ConfigStore.shared.updatePreferences { $0.mcpServerEnabled = newValue } }
     }
     private var mcpPort: UInt16 {
         get {
-            let stored = UInt16(UserDefaults.standard.integer(forKey: mcpPortKey))
-            return stored == 0 ? 8765 : stored
+            let stored = ConfigStore.shared.preferences.mcpServerPort
+            let clamped = min(max(stored, 1), 65535)
+            return UInt16(stored == 0 ? 8765 : clamped)
         }
-        set { UserDefaults.standard.set(Int(newValue), forKey: mcpPortKey) }
+        set { ConfigStore.shared.updatePreferences { $0.mcpServerPort = Int(newValue) } }
     }
 
-    // Préférence globale : si true, la fenêtre de logs est forcée à s'ouvrir
-    // à chaque lancement de script (peu importe son état précédent).
-    private let alwaysShowLogsKey = "alwaysShowLogsAtRun"
+    // Si true, la fenêtre de logs est forcée à s'ouvrir à chaque lancement.
     private var alwaysShowLogsAtRun: Bool {
-        get { UserDefaults.standard.bool(forKey: alwaysShowLogsKey) }
-        set { UserDefaults.standard.set(newValue, forKey: alwaysShowLogsKey) }
+        get { ConfigStore.shared.preferences.alwaysShowLogsAtRun }
+        set { ConfigStore.shared.updatePreferences { $0.alwaysShowLogsAtRun = newValue } }
     }
 
-    // Préférence globale : si true, tout clic sur « Run » est traité comme
-    // « Run in terminal » (Terminal.app / iTerm prend le relais).
-    private let alwaysRunInTerminalKey = "alwaysRunInTerminal"
+    // Si true, tout clic sur « Run » est traité comme « Run in terminal ».
     private var alwaysRunInTerminal: Bool {
-        get { UserDefaults.standard.bool(forKey: alwaysRunInTerminalKey) }
-        set { UserDefaults.standard.set(newValue, forKey: alwaysRunInTerminalKey) }
+        get { ConfigStore.shared.preferences.alwaysRunInTerminal }
+        set { ConfigStore.shared.updatePreferences { $0.alwaysRunInTerminal = newValue } }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -164,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        let scripts = ScriptStore.shared.scripts
+        let scripts = ConfigStore.shared.scripts
 
         if scripts.isEmpty {
             let empty = NSMenuItem(title: "No scripts added", action: nil, keyEquivalent: "")
@@ -181,6 +181,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     keyEquivalent: ""
                 )
                 item.representedObject = script.id.uuidString
+
+                // Affiche l'extension du script en gris, alignée à droite,
+                // juste avant la flèche de disclosure du sous-menu. On utilise
+                // un taquet de tabulation droit : « Mon script ········ sh ».
+                let ext = (script.path as NSString).pathExtension
+                if !ext.isEmpty {
+                    let rightTab: CGFloat = 240
+                    let paragraph = NSMutableParagraphStyle()
+                    paragraph.tabStops = [
+                        NSTextTab(textAlignment: .right, location: rightTab, options: [:])
+                    ]
+                    // tailIndent négatif = distance depuis le bord droit, évite que
+                    // le texte déborde si le nom est long.
+                    paragraph.tailIndent = rightTab
+
+                    let title = NSMutableAttributedString(
+                        string: script.name,
+                        attributes: [
+                            .foregroundColor: NSColor.labelColor,
+                            .paragraphStyle: paragraph
+                        ]
+                    )
+                    title.append(NSAttributedString(
+                        string: "\t\(ext)",
+                        attributes: [
+                            .foregroundColor: NSColor.secondaryLabelColor,
+                            .paragraphStyle: paragraph
+                        ]
+                    ))
+                    item.attributedTitle = title
+                }
 
                 let submenu = NSMenu()
                 submenu.autoenablesItems = false
@@ -260,14 +291,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addItem.target = self
         menu.addItem(addItem)
 
-        let openJSONItem = NSMenuItem(title: "Open scripts.json",
+        let newScriptItem = NSMenuItem(title: "Create new bash script…",
+                                       action: #selector(createNewBashScript),
+                                       keyEquivalent: "n")
+        newScriptItem.target = self
+        menu.addItem(newScriptItem)
+
+        let openJSONItem = NSMenuItem(title: "Open config.json",
                                       action: #selector(openStorageJSON),
                                       keyEquivalent: "")
         openJSONItem.target = self
         menu.addItem(openJSONItem)
 
         // Variante affichée tant que la touche Option est maintenue.
-        let revealJSONItem = NSMenuItem(title: "Show scripts.json",
+        let revealJSONItem = NSMenuItem(title: "Show config.json",
                                         action: #selector(revealStorageJSON),
                                         keyEquivalent: "")
         revealJSONItem.target = self
@@ -354,7 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for url in panel.urls {
             let defaultName = url.deletingPathExtension().lastPathComponent
             let script = Script(name: defaultName, path: url.path)
-            ScriptStore.shared.add(script)
+            ConfigStore.shared.add(script)
             addedScripts.append(script)
         }
         rebuildMenu()
@@ -367,11 +404,113 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func createNewBashScript() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Create new bash script"
+        alert.informativeText = "Enter a name (no need for the .sh extension)."
+        alert.alertStyle = .informational
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = "script name"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let rawName = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawName.isEmpty else { return }
+
+        // Détermine le dossier cible :
+        //   - si QS_CONTEXT_FILE_PATH est défini dans l'env (cas où QuickScript
+        //     a été lancé via une Quick Action Finder), on prend le dossier
+        //     contenant le ou les fichiers sélectionnés.
+        //   - sinon, le dossier standard de scripts dans Application Support.
+        let url = createNewScriptURL(forName: rawName)
+        let header = "#!/usr/bin/env bash\n"
+        do {
+            try header.write(to: url, atomically: true, encoding: .utf8)
+            // chmod 755 → exécutable directement
+            try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                  ofItemAtPath: url.path)
+        } catch {
+            let err = NSAlert()
+            err.messageText = "Unable to create the script"
+            err.informativeText = "\(error.localizedDescription)\n\nPath: \(url.path)"
+            err.alertStyle = .warning
+            err.addButton(withTitle: "OK")
+            _ = err.runModal()
+            return
+        }
+
+        // Enregistre dans le store et reconstruit le menu.
+        let displayName = (rawName as NSString).deletingPathExtension
+        let script = Script(name: displayName.isEmpty ? "script" : displayName, path: url.path)
+        ConfigStore.shared.add(script)
+        rebuildMenu()
+
+        // Propose immédiatement l'éditeur de paramètres : utile pour ajouter
+        // les @param avant d'éditer le code à la main.
+        showParamEditor(for: script)
+    }
+
+    /// Résout l'URL où créer un nouveau script `.sh`.
+    ///
+    /// Si l'environnement de QuickScript contient `QS_CONTEXT_FILE_PATH` (var
+    /// posée par un parent process / une Quick Action), on prend le premier
+    /// chemin de la liste : son dossier parent si c'est un fichier, ou le
+    /// chemin lui-même si c'est un dossier. Sinon, on retombe sur le dossier
+    /// standard `~/Library/Application Support/QuickScript/scripts/`.
+    private func createNewScriptURL(forName name: String) -> URL {
+        let env = ProcessInfo.processInfo.environment
+        guard let ctx = env["QS_CONTEXT_FILE_PATH"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !ctx.isEmpty else {
+            return QSLog.uniqueScriptFileURL(forName: name)
+        }
+
+        let firstPath = ctx
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            ?? ""
+        guard !firstPath.isEmpty else {
+            return QSLog.uniqueScriptFileURL(forName: name)
+        }
+
+        // Si firstPath pointe vers un dossier on l'utilise directement,
+        // sinon on prend son dossier parent.
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        let dirURL: URL
+        if fm.fileExists(atPath: firstPath, isDirectory: &isDir), isDir.boolValue {
+            dirURL = URL(fileURLWithPath: firstPath, isDirectory: true)
+        } else {
+            dirURL = URL(fileURLWithPath: firstPath).deletingLastPathComponent()
+        }
+
+        // Construit un nom de fichier .sh unique dans dirURL (collision → -2, -3, ...).
+        var base = name
+        if base.hasSuffix(".sh") { base = String(base.dropLast(3)) }
+        if base.isEmpty { base = "script" }
+
+        var candidate = dirURL.appendingPathComponent("\(base).sh")
+        var counter = 2
+        while fm.fileExists(atPath: candidate.path) {
+            candidate = dirURL.appendingPathComponent("\(base)-\(counter).sh")
+            counter += 1
+        }
+        return candidate
+    }
+
     @objc private func editScriptParams(_ sender: NSMenuItem) {
         guard
             let idStr = sender.representedObject as? String,
             let id = UUID(uuidString: idStr),
-            let script = ScriptStore.shared.script(for: id)
+            let script = ConfigStore.shared.script(for: id)
         else { return }
         showParamEditor(for: script)
     }
@@ -398,7 +537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard
             let idStr = sender.representedObject as? String,
             let id = UUID(uuidString: idStr),
-            let script = ScriptStore.shared.script(for: id)
+            let script = ConfigStore.shared.script(for: id)
         else { return }
         launch(script: script)
     }
@@ -503,7 +642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard
             let idStr = sender.representedObject as? String,
             let id = UUID(uuidString: idStr),
-            let script = ScriptStore.shared.script(for: id)
+            let script = ConfigStore.shared.script(for: id)
         else { return }
 
         NSApp.activate(ignoringOtherApps: true)
@@ -526,7 +665,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         var updated = script
         updated.name = newName
-        ScriptStore.shared.update(updated)
+        ConfigStore.shared.update(updated)
         rebuildMenu()
     }
 
@@ -534,7 +673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard
             let idStr = sender.representedObject as? String,
             let id = UUID(uuidString: idStr),
-            let script = ScriptStore.shared.script(for: id)
+            let script = ConfigStore.shared.script(for: id)
         else { return }
         launch(script: script, openInTerminal: true)
     }
@@ -543,7 +682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard
             let idStr = sender.representedObject as? String,
             let id = UUID(uuidString: idStr),
-            let script = ScriptStore.shared.script(for: id)
+            let script = ConfigStore.shared.script(for: id)
         else { return }
 
         let controller = ensureLogWindow(for: script)
@@ -576,7 +715,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard
             let idStr = sender.representedObject as? String,
             let id = UUID(uuidString: idStr),
-            let script = ScriptStore.shared.script(for: id)
+            let script = ConfigStore.shared.script(for: id)
         else { return }
 
         NSApp.activate(ignoringOtherApps: true)
@@ -592,7 +731,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let win = logWindows.removeValue(forKey: id) {
                 win.window?.close()
             }
-            ScriptStore.shared.remove(id: id)
+            ConfigStore.shared.remove(id: id)
             rebuildMenu()
         }
     }
@@ -601,7 +740,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard
             let idStr = sender.representedObject as? String,
             let id = UUID(uuidString: idStr),
-            let script = ScriptStore.shared.script(for: id)
+            let script = ConfigStore.shared.script(for: id)
         else { return }
 
         if FileManager.default.fileExists(atPath: script.path) {
@@ -616,23 +755,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openStorageJSON() {
-        let url = ScriptStore.shared.storageURL
+        let url = ConfigStore.shared.storageURL
         if !FileManager.default.fileExists(atPath: url.path) {
-            ScriptStore.shared.save()
+            ConfigStore.shared.save()
         }
         NSWorkspace.shared.open(url)
     }
 
     @objc private func revealStorageJSON() {
-        let url = ScriptStore.shared.storageURL
+        let url = ConfigStore.shared.storageURL
         if !FileManager.default.fileExists(atPath: url.path) {
-            ScriptStore.shared.save()
+            ConfigStore.shared.save()
         }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     @objc private func refreshFromDisk() {
-        ScriptStore.shared.load()
+        ConfigStore.shared.load()
         rebuildMenu()
         updateStatusIcon()
     }
@@ -741,7 +880,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .alertFirstButtonReturn:
             relocateScript(script)
         case .alertSecondButtonReturn:
-            ScriptStore.shared.remove(id: script.id)
+            ConfigStore.shared.remove(id: script.id)
             rebuildMenu()
         default:
             break
@@ -761,7 +900,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         var updated = script
         updated.path = url.path
-        ScriptStore.shared.update(updated)
+        ConfigStore.shared.update(updated)
         rebuildMenu()
     }
 
@@ -849,7 +988,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showScriptPicker(forFiles files: [String], contextPath: String?) {
         NSApp.activate(ignoringOtherApps: true)
 
-        let scripts = ScriptStore.shared.scripts
+        let scripts = ConfigStore.shared.scripts
 
         if scripts.isEmpty {
             let alert = NSAlert()
@@ -884,14 +1023,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26),
                                   pullsDown: false)
-        for s in scripts {
-            popup.addItem(withTitle: s.name)
+        // ⚠️ Ne pas utiliser addItem(withTitle:) : AppKit supprime tout item de
+        // même titre avant d'ajouter le nouveau (à la fin), ce qui décale les
+        // index dès que deux scripts portent le même nom. On ajoute donc des
+        // NSMenuItem manuellement, avec l'index du script stocké dans `tag`.
+        for (i, s) in scripts.enumerated() {
+            let item = NSMenuItem(title: s.name, action: nil, keyEquivalent: "")
+            item.tag = i
+            popup.menu?.addItem(item)
         }
         alert.accessoryView = popup
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let idx = popup.indexOfSelectedItem
-        guard idx >= 0 && idx < scripts.count else { return }
+        guard let idx = popup.selectedItem?.tag, idx >= 0, idx < scripts.count else { return }
         launch(script: scripts[idx], contextFiles: files, contextPath: contextPath)
     }
 }
@@ -905,10 +1049,10 @@ extension AppDelegate: MCPToolHost {
     /// Résout un script par UUID (si `target` est un UUID valide) sinon par nom.
     private func resolveScript(_ target: String?) -> Script? {
         guard let target = target, !target.isEmpty else { return nil }
-        if let uuid = UUID(uuidString: target), let s = ScriptStore.shared.script(for: uuid) {
+        if let uuid = UUID(uuidString: target), let s = ConfigStore.shared.script(for: uuid) {
             return s
         }
-        return ScriptStore.shared.scripts.first { $0.name == target }
+        return ConfigStore.shared.scripts.first { $0.name == target }
     }
 
     /// Convertit la représentation JSON d'un paramètre en `ScriptParam`.
@@ -939,7 +1083,7 @@ extension AppDelegate: MCPToolHost {
     }
 
     func mcpListScripts() -> MCPToolOutcome {
-        let scripts = ScriptStore.shared.scripts.map(scriptJSON)
+        let scripts = ConfigStore.shared.scripts.map(scriptJSON)
         return .ok(["scripts": scripts, "count": scripts.count])
     }
 
@@ -968,7 +1112,7 @@ extension AppDelegate: MCPToolHost {
         }
 
         let script = Script(name: name, path: url.path)
-        ScriptStore.shared.add(script)
+        ConfigStore.shared.add(script)
         rebuildMenu()
 
         return .ok([

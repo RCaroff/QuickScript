@@ -130,13 +130,33 @@ Pour les tester : `Ajouter un script…` → choisir un des fichiers → cliquer
 
 ## Stockage
 
-Liste des scripts persistée dans :
+Toute la configuration (liste des scripts **et** préférences : *always run in
+terminal*, *always show logs window*, activation et port du serveur MCP) est
+persistée dans un seul fichier :
 
 ```
-~/Library/Application Support/QuickScript/scripts.json
+~/Library/Application Support/QuickScript/config.json
 ```
 
-JSON lisible et éditable à la main si besoin.
+JSON lisible et éditable à la main (cliquer *Refresh* dans le menu après une
+édition externe). Forme :
+
+```json
+{
+  "preferences": {
+    "alwaysRunInTerminal": false,
+    "alwaysShowLogsAtRun": false,
+    "mcpServerEnabled": false,
+    "mcpServerPort": 8765
+  },
+  "scripts": [
+    { "id": "UUID", "name": "Mon script", "path": "/abs/path/script.sh" }
+  ]
+}
+```
+
+Migration automatique depuis l'ancien `scripts.json` (+ préférences `UserDefaults`)
+au premier lancement.
 
 ## Interpréteurs reconnus
 

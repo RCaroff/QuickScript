@@ -37,7 +37,8 @@ QuickScript/
 └── Sources/
     ├── Models/
     │   ├── Script.swift
-    │   ├── ScriptStore.swift
+    │   ├── AppConfig.swift
+    │   ├── ConfigStore.swift
     │   └── EditableParam.swift
     ├── Views/
     │   └── FlippedView.swift
@@ -62,7 +63,8 @@ QuickScript/
 | Fichier | Rôle | Dépendances |
 |---------|------|-------------|
 | `Models/Script.swift` | `struct Script` (Codable id+name+path) + `struct ScriptParam` | Foundation |
-| `Models/ScriptStore.swift` | Singleton persistance JSON (`scripts.json`) | `Script` |
+| `Models/AppConfig.swift` | `AppConfig {scripts, preferences}` + `Preferences` | `Script` |
+| `Models/ConfigStore.swift` | Singleton persistance JSON (`config.json` : scripts + préférences) | `AppConfig` |
 | `Models/EditableParam.swift` | Classe ref-type mutable utilisée par l'éditeur | `ScriptParam` |
 | `Helpers/ScriptHeaderParser.swift` | Lit les `# @param NAME[=DEFAULT] desc` dans un .sh | `ScriptParam` |
 | `Helpers/ParamSerializer.swift` | Réécrit les `# @param` dans le .sh (en place ou après shebang) | `ScriptParam` |

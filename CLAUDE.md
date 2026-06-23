@@ -32,7 +32,8 @@ QuickScript/
 └── Sources/
     ├── Models/
     │   ├── Script.swift               ← struct Script + ScriptParam
-    │   ├── ScriptStore.swift          ← singleton persistance JSON
+    │   ├── ConfigStore.swift          ← singleton persistance JSON (config.json)
+    │   ├── AppConfig.swift            ← AppConfig {scripts, preferences} + Preferences
     │   └── EditableParam.swift        ← ligne mutable de l'éditeur
     ├── Views/
     │   └── FlippedView.swift          ← NSView avec coords top-down
@@ -81,7 +82,8 @@ Un fichier = une responsabilité. Les sections internes restent délimitées par
 | Fichier | Rôle |
 |---------|------|
 | `Models/Script.swift` | `struct Script` (Codable, id+name+path) et `ScriptParam` |
-| `Models/ScriptStore.swift` | Singleton de persistance JSON (`scripts.json`) |
+| `Models/ConfigStore.swift` | Singleton de persistance JSON (`config.json` : scripts + préférences) |
+| `Models/AppConfig.swift` | `AppConfig {scripts, preferences}` + `Preferences` (Codable tolérant) |
 | `Models/EditableParam.swift` | Classe mutable utilisée par l'éditeur (ref type pour mutation via cellules de tableau) |
 | `Helpers/ScriptHeaderParser.swift` | Parse les directives `# @param NAME[=DEFAULT] [description]` |
 | `Helpers/ParamSerializer.swift` | Réécrit les `# @param` dans le fichier `.sh` (remplace en place ou insère après le shebang) |
@@ -109,9 +111,9 @@ Un fichier = une responsabilité. Les sections internes restent délimitées par
 ### Construction du menu
 
 `rebuildMenu()` reconstruit l'intégralité du menu de la status bar à chaque mutation :
-- Liste des scripts (depuis `ScriptStore.shared.scripts`)
+- Liste des scripts (depuis `ConfigStore.shared.scripts`)
 - Pour chaque script : un `NSMenuItem` avec sous-menu (Exécuter, Exécuter dans le terminal *(alternate Option)*, Révéler, Show/Hide logs window, Renommer, Supprimer)
-- Bottom : *Ajouter un script…*, *Ouvrir scripts.json* / *Afficher scripts.json (alternate Option)*, *Actualiser*, *Quitter*
+- Bottom : *Ajouter un script…*, *Ouvrir config.json* / *Afficher config.json (alternate Option)*, *Actualiser*, *Quitter*
 
 Pattern important : **alternate Option** = duo de menu items avec le même `keyEquivalent` et le 2e a `isAlternate=true` + `keyEquivalentModifierMask=.option`. AppKit swap automatiquement la visibilité.
 
@@ -133,7 +135,8 @@ puisse piloter l'app, via **deux transports** partageant le même cœur :
   `--mcp-stdio` (branché dans `main.swift` avant tout démarrage d'UI).
 
 **Transport HTTP (mode GUI)** — Activation via le menu : *Enable MCP server*
-(toggle persisté dans `UserDefaults`, clés `mcpServerEnabled` / `mcpServerPort`).
+(toggle persisté dans `config.json` → `preferences.mcpServerEnabled` /
+`preferences.mcpServerPort`).
 Démarré au boot si activé. En cas d'échec (port pris), le toggle se désactive et
 une alerte s'affiche (`onFailure`). Le port se règle via *Configure MCP port…*
 (`configureMCPPort`, NSAlert + NSTextField, valide 1024–65535) ; si le serveur
@@ -141,7 +144,7 @@ tournait, il redémarre sur le nouveau port.
 
 **Transport stdio (mode headless)** — Le client lance
 `QuickScript.app/Contents/MacOS/QuickScript --mcp-stdio`. Aucune UI. Le host
-opère directement sur `scripts.json` (rechargé à chaque appel pour cohérence
+opère directement sur `config.json` (rechargé à chaque appel pour cohérence
 avec une instance GUI éventuelle) et exécute `run_script` de façon **synchrone**
 via `Process`, en renvoyant `exitCode` / `stdout` / `stderr` à l'IA (le mode
 terminal n'y est pas disponible).
@@ -186,7 +189,7 @@ Outils exposés (`tools/list`, `tools/call`), identiques sur les deux transports
 
 `AppDelegate` implémente `MCPToolHost`. **Toutes les méthodes du host sont
 appelées sur le main thread** (le serveur fait `DispatchQueue.main.sync` depuis
-sa queue réseau) car elles touchent à `ScriptStore`, au menu et au lancement.
+sa queue réseau) car elles touchent à `ConfigStore`, au menu et au lancement.
 Le lancement programmatique passe par `launch(... presetValues:)` qui contourne
 `ParamInputDialog` : chaque param prend `presetValues[name] ?? defaultValue ?? ""`.
 
@@ -255,16 +258,47 @@ Les `@param` du script sont passés en arguments CLI (`$1`, `$2`, …) — **jam
 
 ## Persistance
 
-`scripts.json` :
+**Toute** la configuration utilisateur vit dans un seul fichier `config.json`
+(plus de `UserDefaults`) :
+
 ```json
-[
-  { "id": "UUID", "name": "Mon script", "path": "/abs/path/script.sh" }
-]
+{
+  "preferences": {
+    "alwaysRunInTerminal": false,
+    "alwaysShowLogsAtRun": false,
+    "mcpServerEnabled": false,
+    "mcpServerPort": 8765
+  },
+  "scripts": [
+    { "id": "UUID", "name": "Mon script", "path": "/abs/path/script.sh" }
+  ]
+}
 ```
 
-Stocké dans `~/Library/Application Support/QuickScript/scripts.json` (chemin obtenu via `FileManager.urls(for:.applicationSupportDirectory)`). L'encoder utilise `[.prettyPrinted, .sortedKeys]`.
+Stocké dans `~/Library/Application Support/QuickScript/config.json` (chemin
+obtenu via `FileManager.urls(for:.applicationSupportDirectory)`). L'encoder
+utilise `[.prettyPrinted, .sortedKeys]`.
 
-Le decoder de `Script` est **rétrocompatible** : tout champ inconnu (`silent`, `openInTerminal`, `showLogs`, etc. — anciens essais de design) est ignoré. Si tu ajoutes un nouveau champ booléen, mets-le avec `decodeIfPresent(...) ?? defaultValue` dans le `init(from:)` custom.
+Modèle : `Models/AppConfig.swift` définit `AppConfig { scripts, preferences }` et
+`Preferences`. `Models/ConfigStore.swift` est le singleton de persistance
+(`ConfigStore.shared`), qui expose `scripts` (+ `add/remove/update/script(for:)`)
+et `preferences` (muté via `updatePreferences { $0.… = … }`, qui sauve aussitôt).
+
+**Migration** : au premier lancement, si `config.json` est absent mais que
+l'ancien `scripts.json` et/ou les anciennes clés `UserDefaults`
+(`alwaysRunInTerminal`, `alwaysShowLogsAtRun`, `mcpServerEnabled`,
+`mcpServerPort`) existent, `ConfigStore.migrateLegacyIfNeeded()` les importe une
+fois puis écrit `config.json`. L'ancien `scripts.json` est laissé en place mais
+n'est plus relu.
+
+Les décodeurs de `Preferences` et `AppConfig` sont **tolérants aux clés
+manquantes** (`decodeIfPresent(...) ?? défaut`) — ajoute un nouveau champ de la
+même façon. Le decoder de `Script` reste rétrocompatible : tout champ inconnu
+(`silent`, `openInTerminal`, `showLogs`, etc.) est ignoré.
+
+Les préférences sont lues/écrites par `AppDelegate` via des accesseurs
+(`mcpEnabled`, `mcpPort`, `alwaysShowLogsAtRun`, `alwaysRunInTerminal`) qui
+délèguent à `ConfigStore.shared.preferences`.
 
 ## Logs fichier
 
@@ -378,9 +412,9 @@ Les chunks du PTY arrivent sur une queue globale (readabilityHandler). Pour part
 
 Quand macOS lance une app via LaunchServices, le `pwd` est `/`. Tout script lancé via `ScriptRunner` hérite de ce `$PWD=/`. Si un script utilise `$PWD` comme fallback (ex: ancien bug de `flatten-folder.sh`), c'est catastrophique. **Toujours préférer** `$QS_CONTEXT_TARGET_PATH` ou un `@param target_dir` explicite, et refuser les paths sensibles.
 
-### Édition de scripts.json à la main pendant que l'app tourne
+### Édition de config.json à la main pendant que l'app tourne
 
-L'app ne surveille pas le fichier. Après édition externe, l'utilisateur doit cliquer *Actualiser* dans le menu, ce qui appelle `ScriptStore.shared.load()` + `rebuildMenu()`.
+L'app ne surveille pas le fichier. Après édition externe, l'utilisateur doit cliquer *Actualiser* dans le menu, ce qui appelle `ConfigStore.shared.load()` + `rebuildMenu()` (recharge aussi les `preferences`). Note : un changement de `mcpServerEnabled` via édition externe + Actualiser ne démarre/arrête pas le serveur MCP automatiquement (seul le toggle du menu le fait).
 
 ### Détection de prompt = heuristique
 

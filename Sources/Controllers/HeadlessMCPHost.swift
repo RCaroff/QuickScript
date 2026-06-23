@@ -6,22 +6,22 @@ import Foundation
 
 /// Implémentation de `MCPToolHost` **sans AppKit**, utilisée par le transport
 /// stdio (`--mcp-stdio`). N'a pas de menu ni de fenêtre : opère directement sur
-/// `ScriptStore` (fichier `scripts.json`) et le dossier `scripts/`, et exécute
+/// `ConfigStore` (fichier `config.json`) et le dossier `scripts/`, et exécute
 /// les scripts de façon synchrone via `Process` en capturant la sortie.
 ///
 /// Recharge le store au début de chaque opération pour rester cohérent avec une
 /// éventuelle instance GUI tournant en parallèle (qui partage le même
-/// `scripts.json`).
+/// `config.json`).
 final class HeadlessMCPHost: MCPToolHost {
 
     // MARK: Helpers de résolution / sérialisation
 
     private func resolveScript(_ target: String?) -> Script? {
         guard let target = target, !target.isEmpty else { return nil }
-        if let uuid = UUID(uuidString: target), let s = ScriptStore.shared.script(for: uuid) {
+        if let uuid = UUID(uuidString: target), let s = ConfigStore.shared.script(for: uuid) {
             return s
         }
-        return ScriptStore.shared.scripts.first { $0.name == target }
+        return ConfigStore.shared.scripts.first { $0.name == target }
     }
 
     private func scriptParam(from dict: [String: Any]) -> ScriptParam? {
@@ -53,8 +53,8 @@ final class HeadlessMCPHost: MCPToolHost {
     // MARK: Outils
 
     func mcpListScripts() -> MCPToolOutcome {
-        ScriptStore.shared.load()
-        let scripts = ScriptStore.shared.scripts.map(scriptJSON)
+        ConfigStore.shared.load()
+        let scripts = ConfigStore.shared.scripts.map(scriptJSON)
         return .ok(["scripts": scripts, "count": scripts.count])
     }
 
@@ -80,15 +80,15 @@ final class HeadlessMCPHost: MCPToolHost {
         }
 
         // Recharge avant d'ajouter pour ne pas écraser des changements concurrents.
-        ScriptStore.shared.load()
+        ConfigStore.shared.load()
         let script = Script(name: name, path: url.path)
-        ScriptStore.shared.add(script)
+        ConfigStore.shared.add(script)
 
         return .ok(["ok": true, "script": scriptJSON(script)])
     }
 
     func mcpUpdateParams(target: String?, params: [[String: Any]]) -> MCPToolOutcome {
-        ScriptStore.shared.load()
+        ConfigStore.shared.load()
         guard let script = resolveScript(target) else {
             return .error("Script introuvable pour : \(target ?? "(vide)")")
         }
@@ -103,7 +103,7 @@ final class HeadlessMCPHost: MCPToolHost {
     }
 
     func mcpRunScript(target: String?, values: [String: String], inTerminal: Bool) -> MCPToolOutcome {
-        ScriptStore.shared.load()
+        ConfigStore.shared.load()
         guard let script = resolveScript(target) else {
             return .error("Script introuvable pour : \(target ?? "(vide)")")
         }

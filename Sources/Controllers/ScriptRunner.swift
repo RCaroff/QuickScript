@@ -100,6 +100,17 @@ final class ScriptRunner {
         var env = ProcessInfo.processInfo.environment
         env["TERM"] = "dumb"
         env["PYTHONUNBUFFERED"] = "1"
+        // Quand l'app est lancée par LaunchServices (Dock, status bar), le PATH
+        // hérité est minimal (/usr/bin:/bin:/usr/sbin:/sbin) et n'inclut pas les
+        // emplacements Homebrew. Résultat : `gh`, `brew`, etc. sont introuvables
+        // en mode silencieux (alors qu'ils marchent en mode terminal, qui passe
+        // par un shell de login). On préfixe donc les bin dirs usuels.
+        env["PATH"] = Self.augmentedPATH(env["PATH"])
+        // Purge explicite des vars QS_CONTEXT_* éventuellement présentes dans
+        // l'env hérité — sinon une vieille valeur du parent process leakerait
+        // vers le child même si on ne passe pas contextPath/contextFiles.
+        env.removeValue(forKey: "QS_CONTEXT_TARGET_PATH")
+        env.removeValue(forKey: "QS_CONTEXT_FILE_PATH")
         if let path = contextPath {
             env["QS_CONTEXT_TARGET_PATH"] = path
         }
@@ -383,6 +394,28 @@ final class ScriptRunner {
 
         scroll.documentView = textView
         return scroll
+    }
+
+    /// Préfixe le PATH hérité avec les emplacements bin courants (Homebrew,
+    /// /usr/local, ~/.local/bin, ~/bin) sans dupliquer ce qui est déjà présent.
+    static func augmentedPATH(_ inherited: String?) -> String {
+        let home = NSHomeDirectory()
+        let extras = [
+            "/opt/homebrew/bin",   // Homebrew Apple Silicon
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",      // Homebrew Intel
+            "/usr/local/sbin",
+            "\(home)/.local/bin",
+            "\(home)/bin",
+        ]
+        var seen = Set<String>()
+        var parts: [String] = []
+        for dir in extras + (inherited?.split(separator: ":").map(String.init) ?? []) {
+            guard !dir.isEmpty, !seen.contains(dir) else { continue }
+            seen.insert(dir)
+            parts.append(dir)
+        }
+        return parts.joined(separator: ":")
     }
 
     static func interpreter(for ext: String) -> String? {

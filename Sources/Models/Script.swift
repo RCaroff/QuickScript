@@ -5,7 +5,7 @@ import Foundation
 // ============================================================================
 
 /// Représentation d'un script importé par l'utilisateur dans QuickScript.
-/// Persistée dans ~/Library/Application Support/QuickScript/scripts.json.
+/// Persistée dans ~/Library/Application Support/QuickScript/config.json.
 struct Script: Codable {
     var id: UUID
     var name: String   // nom affiché dans le menu (renommable)

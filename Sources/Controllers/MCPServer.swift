@@ -26,7 +26,7 @@ struct MCPToolOutcome {
 /// Délégué métier du serveur MCP. Implémenté par `AppDelegate`.
 ///
 /// ⚠️ Toutes ces méthodes sont appelées **sur le main thread** par le serveur
-/// (via `DispatchQueue.main.sync`), car elles touchent à `ScriptStore`, au menu
+/// (via `DispatchQueue.main.sync`), car elles touchent à `ConfigStore`, au menu
 /// et au lancement de scripts (AppKit).
 protocol MCPToolHost: AnyObject {
     func mcpListScripts() -> MCPToolOutcome
