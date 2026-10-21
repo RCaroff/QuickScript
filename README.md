@@ -1,4 +1,8 @@
-<h1><img src="icon/AppIcon.iconset/icon_128x128@2x.png" alt="QuickScript icon" width="64" align="middle"> QuickScript</h1>
+<p align="center">
+  <img src="icon/readme-icon.png" alt="QuickScript icon" width="83">
+</p>
+
+<h1 align="center">QuickScript</h1>
 
 A tiny macOS menu bar app to register your scripts (bash, Python, Ruby, Node, …) and **run them in one click**: silently in the background, in a Terminal window, or straight from the Finder's context menu.
 

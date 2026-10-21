@@ -74,6 +74,9 @@ dans `AppDelegate.updateStatusIcon()`, recolorée par macOS selon le thème). Le
 caractère ⚡ ne sert plus que de fallback si l'image n'est pas trouvée. Le badge
 de scripts en cours s'affiche à côté : ` (N)`. `icon/menu-icon-white@3x.png` est
 une variante blanche utilisée uniquement par le README (mode sombre GitHub).
+`icon/readme-icon.png` (256 px, coins arrondis façon macOS, généré depuis
+`icon.png`) sert de logo en tête du README — GitHub ignore les styles CSS, d'où
+les coins arrondis intégrés à l'image. À régénérer si `icon.png` change.
 
 Pas de Xcode project. La compilation passe par `swiftc` direct dans `build.sh`, qui crée ensuite manuellement le bundle `.app`.
 
