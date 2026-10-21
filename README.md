@@ -1,4 +1,4 @@
-# QuickScript
+<h1><img src="icon/AppIcon.iconset/icon_128x128@2x.png" alt="QuickScript icon" width="64" align="middle"> QuickScript</h1>
 
 A tiny macOS menu bar app to register your scripts (bash, Python, Ruby, Node, …) and **run them in one click**: silently in the background, in a Terminal window, or straight from the Finder's context menu.
 
@@ -28,13 +28,13 @@ cd QuickScript
 | `./build.sh --run` | Builds, then launches the app |
 | `./build.sh --install` | Builds, copies the app to `~/Applications` **and** `/Applications` (asks for your password via `sudo`), refreshes the Services menu and restarts Dock/Finder |
 
-The app is ad-hoc signed for local use. It has no Dock icon: look for **⚡** in the menu bar.
+The app is ad-hoc signed for local use. It has no Dock icon: look for <picture><source media="(prefers-color-scheme: dark)" srcset="icon/menu-icon-white@3x.png"><img src="icon/menu-icon@3x.png" alt="QuickScript menu bar icon" height="18" align="top"></picture> in the menu bar.
 
 ## Usage
 
 ### The menu
 
-While scripts are running, the menu bar icon becomes `⚡(N)`.
+While scripts are running, the menu bar icon shows how many are running, e.g. `(2)`.
 
 Each registered script has a submenu:
 

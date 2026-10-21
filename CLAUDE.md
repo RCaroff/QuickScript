@@ -68,9 +68,12 @@ Pour modifier le design : éditer `icon.svg`, puis régénérer les PNGs avec
 (`16x16`, `16x16@2x`, `32x32`, `32x32@2x`, `128x128`, `128x128@2x`, `256x256`,
 `256x256@2x`, `512x512`, `512x512@2x`). Voir README.md pour le snippet exact.
 
-L'icône de la status bar reste le caractère ⚡ via
-`statusItem.button.title = "⚡"` — c'est volontairement distinct (NSImage
-plus difficile à équilibrer aux tailles de la menu bar).
+L'icône de la status bar est une template image (`icon/menu-icon.png` + `@2x`/`@3x`,
+copiée dans `Resources/` par `build.sh`, chargée via `NSImage(named: "menu-icon")`
+dans `AppDelegate.updateStatusIcon()`, recolorée par macOS selon le thème). Le
+caractère ⚡ ne sert plus que de fallback si l'image n'est pas trouvée. Le badge
+de scripts en cours s'affiche à côté : ` (N)`. `icon/menu-icon-white@3x.png` est
+une variante blanche utilisée uniquement par le README (mode sombre GitHub).
 
 Pas de Xcode project. La compilation passe par `swiftc` direct dans `build.sh`, qui crée ensuite manuellement le bundle `.app`.
 
