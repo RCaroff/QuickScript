@@ -1,34 +1,33 @@
 #!/usr/bin/env bash
 #
-# Rogne les bords des images sélectionnées dans le Finder via QuickScript.
+# Crops the edges of the images selected in the Finder, via QuickScript.
 #
-# Source des images, par ordre de priorité :
-#   1. @param path                    (rempli dans le dialog QuickScript)
-#   2. $QS_CONTEXT_FILE_PATH          (Quick Action « Exécuter avec
-#                                      QuickScript… » sur sélection Finder ;
-#                                      un chemin par ligne)
+# Image source, in priority order:
+#   1. @param path                    (filled in the QuickScript dialog)
+#   2. $QS_CONTEXT_FILE_PATH          (Finder service « Run with
+#                                      QuickScript… » on a selection;
+#                                      one path per line)
 #
-# Paramètres :
-#   - left   : pixels à retirer du bord gauche
-#   - right  : pixels à retirer du bord droit
-#   - top    : pixels à retirer du bord haut
-#   - bottom : pixels à retirer du bord bas
-#   - path   : chemin explicite d'une image (vide = utilise
+# Parameters:
+#   - left   : pixels to remove from the left edge
+#   - right  : pixels to remove from the right edge
+#   - top    : pixels to remove from the top edge
+#   - bottom : pixels to remove from the bottom edge
+#   - path   : explicit path to an image (empty = use
 #              $QS_CONTEXT_FILE_PATH)
 #
-# Au moins une des quatre valeurs de rognage doit être > 0. Les valeurs
-# vides sont traitées comme 0.
+# At least one of the four crop values must be > 0. Empty values are
+# treated as 0.
 #
-# Sortie :
-#   Chaque image est dupliquée à côté de l'original avec un suffixe
-#   `_crop` (par ex. `photo.jpg` → `photo_crop.jpg`). Les originaux ne
-#   sont jamais modifiés.
+# Output:
+#   Each image is duplicated next to the original with a `_crop` suffix
+#   (e.g. `photo.jpg` → `photo_crop.jpg`). Originals are never modified.
 #
-# @param left=0  Pixels à rogner à gauche
-# @param right=0  Pixels à rogner à droite
-# @param top=0  Pixels à rogner en haut
-# @param bottom=0  Pixels à rogner en bas
-# @param path  Chemin de l'image (vide = sélection Finder)
+# @param left=0  Pixels to crop on the left
+# @param right=0  Pixels to crop on the right
+# @param top=0  Pixels to crop at the top
+# @param bottom=0  Pixels to crop at the bottom
+# @param path  Image path (empty = Finder selection)
 #
 set -euo pipefail
 
@@ -38,9 +37,9 @@ top="${3:-0}"
 bottom="${4:-0}"
 path_param="${5:-}"
 
-# --- Validation des paramètres ---------------------------------------------
+# --- Parameter validation --------------------------------------------------
 
-# Une valeur vide est tolérée et interprétée comme 0.
+# An empty value is allowed and treated as 0.
 [[ -z "$left"   ]] && left=0
 [[ -z "$right"  ]] && right=0
 [[ -z "$top"    ]] && top=0
@@ -52,33 +51,33 @@ for pair in "left:$left" "right:$right" "top:$top" "bottom:$bottom"; do
     name="${pair%%:*}"
     val="${pair##*:}"
     if ! is_non_negative_int "$val"; then
-        echo "Erreur : $name doit être un entier ≥ 0 (reçu : « $val »)." >&2
+        echo "Error: $name must be an integer ≥ 0 (got « $val »)." >&2
         exit 1
     fi
 done
 
 if (( left + right + top + bottom == 0 )); then
-    echo "Erreur : renseigne au moins une valeur de rognage > 0." >&2
+    echo "Error: set at least one crop value > 0." >&2
     exit 1
 fi
 
-# --- Résolution des fichiers à traiter -------------------------------------
+# --- Resolve the files to process ------------------------------------------
 
-# Si l'utilisateur a fourni un path explicite via le dialog, on l'utilise
-# (une seule image). Sinon on retombe sur $QS_CONTEXT_FILE_PATH (multi-ligne).
+# If the user entered an explicit path in the dialog, use it (single image).
+# Otherwise fall back to $QS_CONTEXT_FILE_PATH (multi-line).
 if [[ -n "$path_param" ]]; then
     source_list="$path_param"
 elif [[ -n "${QS_CONTEXT_FILE_PATH:-}" ]]; then
     source_list="$QS_CONTEXT_FILE_PATH"
 else
-    echo "Erreur : aucune image reçue." >&2
-    echo "Sélectionne une ou plusieurs images dans le Finder et lance le" >&2
-    echo "script via « Exécuter avec QuickScript… », ou remplis le" >&2
-    echo "paramètre path dans le dialog." >&2
+    echo "Error: no image received." >&2
+    echo "Select one or more images in the Finder and run the script via" >&2
+    echo "« Run with QuickScript… », or fill in the path parameter in the" >&2
+    echo "dialog." >&2
     exit 1
 fi
 
-# --- Traitement ------------------------------------------------------------
+# --- Processing ------------------------------------------------------------
 
 processed=0
 skipped=0
@@ -87,11 +86,11 @@ failed=0
 while IFS= read -r src; do
     [[ -z "$src" ]] && continue
 
-    # Expansion ~ → $HOME pour les paths saisis à la main.
+    # Expand ~ → $HOME for paths typed by hand.
     src="${src/#\~/$HOME}"
 
     if [[ ! -f "$src" ]]; then
-        echo "Ignoré (introuvable) : $src" >&2
+        echo "Skipped (not found): $src" >&2
         skipped=$((skipped + 1))
         continue
     fi
@@ -100,15 +99,15 @@ while IFS= read -r src; do
     case "$ext_lc" in
         jpg|jpeg|png|tif|tiff|gif|bmp|heic|heif|webp) ;;
         *)
-            echo "Ignoré (extension non supportée) : $src" >&2
+            echo "Skipped (unsupported extension): $src" >&2
             skipped=$((skipped + 1))
             continue
             ;;
     esac
 
-    # Dimensions originales via sips.
+    # Original dimensions via sips.
     if ! dims=$(sips -g pixelWidth -g pixelHeight "$src" 2>/dev/null); then
-        echo "Ignoré (lecture sips impossible) : $src" >&2
+        echo "Skipped (sips could not read it): $src" >&2
         failed=$((failed + 1))
         continue
     fi
@@ -116,7 +115,7 @@ while IFS= read -r src; do
     orig_h=$(awk '/pixelHeight:/ {print $2}' <<< "$dims")
 
     if ! is_non_negative_int "${orig_w:-x}" || ! is_non_negative_int "${orig_h:-x}"; then
-        echo "Ignoré (dimensions illisibles) : $src" >&2
+        echo "Skipped (unreadable dimensions): $src" >&2
         failed=$((failed + 1))
         continue
     fi
@@ -125,7 +124,7 @@ while IFS= read -r src; do
     new_h=$(( orig_h - top  - bottom ))
 
     if (( new_w <= 0 || new_h <= 0 )); then
-        echo "Ignoré (rognage > taille de l'image ${orig_w}×${orig_h}) : $src" >&2
+        echo "Skipped (crop larger than image ${orig_w}×${orig_h}): $src" >&2
         skipped=$((skipped + 1))
         continue
     fi
@@ -144,8 +143,8 @@ while IFS= read -r src; do
     done
 
     echo "→ $src  (${orig_w}×${orig_h} → ${new_w}×${new_h}, offset ${left},${top})"
-    # sips --cropOffset Y X : origine en haut-à-gauche, en pixels.
-    # --cropToHeightWidth H W : taille finale de la zone conservée.
+    # sips --cropOffset Y X: origin at top-left, in pixels.
+    # --cropToHeightWidth H W: final size of the kept area.
     if sips \
         --cropOffset "$top" "$left" \
         --cropToHeightWidth "$new_h" "$new_w" \
@@ -153,14 +152,16 @@ while IFS= read -r src; do
         echo "  ✓ $dest"
         processed=$((processed + 1))
     else
-        echo "  ✗ échec sips" >&2
+        echo "  ✗ sips failed" >&2
         failed=$((failed + 1))
     fi
 done <<< "$source_list"
 
 echo ""
-echo "Traitées : $processed"
-[[ "$skipped" -gt 0 ]] && echo "Ignorées : $skipped"
-[[ "$failed"  -gt 0 ]] && echo "Échecs   : $failed"
+echo "Processed: $processed"
+[[ "$skipped" -gt 0 ]] && echo "Skipped:   $skipped"
+[[ "$failed"  -gt 0 ]] && echo "Failed:    $failed"
 
+# Non-zero exit if anything failed, so QuickScript shows the error alert in
+# silent mode.
 [[ "$failed" -eq 0 ]]

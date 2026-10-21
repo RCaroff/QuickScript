@@ -66,13 +66,13 @@ QuickScript/
 | `Models/AppConfig.swift` | `AppConfig {scripts, preferences}` + `Preferences` | `Script` |
 | `Models/ConfigStore.swift` | Singleton persistance JSON (`config.json` : scripts + préférences) | `AppConfig` |
 | `Models/EditableParam.swift` | Classe ref-type mutable utilisée par l'éditeur | `ScriptParam` |
-| `Helpers/ScriptHeaderParser.swift` | Lit les `# @param NAME[=DEFAULT] desc` dans un .sh | `ScriptParam` |
+| `Helpers/ScriptHeaderParser.swift` | Lit les `# @param NAME[:TYPE][=DEFAULT] desc` dans un .sh | `ScriptParam`, `ParamType` |
 | `Helpers/ParamSerializer.swift` | Réécrit les `# @param` dans le .sh (en place ou après shebang) | `ScriptParam` |
 | `Helpers/ANSIParser.swift` | Convertit séquences ANSI SGR → `NSAttributedString` | AppKit (NSFont/NSColor) |
 | `Helpers/QSLog.swift` | Chemins `~/Library/Application Support/QuickScript/logs/<script>/...` | `Script` |
 | `Helpers/PTY.swift` | `posix_openpt` + `grantpt` + `unlockpt` + termios | Darwin |
 | `Views/FlippedView.swift` | `NSView` avec `isFlipped = true` (coords top-down) | AppKit |
-| `Dialogs/ParamInputDialog.swift` | `NSAlert` avec N text fields générés depuis les `@param` | `ScriptParam`, `FlippedView` |
+| `Dialogs/ParamInputDialog.swift` | `NSAlert` avec un contrôle par `@param` (texte / checkbox / popup selon `ParamType`) | `ScriptParam`, `FlippedView` |
 | `Controllers/ScriptRunner.swift` | Exécution silencieuse via PTY, capture, détection de prompt, alerte d'erreur | `PTY`, `QSLog`, `ANSIParser`, `LogWindowController` |
 | `Controllers/TerminalLauncher.swift` | Exécution dans Terminal.app / iTerm via AppleScript, wrap `script(1)` | `QSLog`, `Script` |
 | `Controllers/LogWindowController.swift` | Fenêtre persistante par script, popup historique, ANSI rendering | `ANSIParser`, `QSLog` |

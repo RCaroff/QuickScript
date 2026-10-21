@@ -19,6 +19,11 @@ final class ScriptRunner {
     private var logFileHandle: FileHandle?
 
     private let process = Process()
+    private var childPID: pid_t = -1
+
+    /// Identifiant du script exécuté — utilisé par `AppDelegate` pour retrouver
+    /// le(s) runner(s) actif(s) d'un script donné (bouton « Stop »).
+    var scriptID: UUID { script.id }
 
     // PTY : un seul "pipe bidirectionnel" qui se comporte comme un vrai terminal
     // côté child → bash, python, etc. affichent leurs prompts correctement, et
@@ -134,6 +139,9 @@ final class ScriptRunner {
             onFinish?()
             return
         }
+
+        // Mémorise le PID du child pour pouvoir tuer tout son arbre depuis stop().
+        childPID = process.processIdentifier
 
         // Ferme notre copie du slave pour que le master reçoive EOF à la fin du child.
         Darwin.close(pty.slaveFD)
@@ -330,6 +338,64 @@ final class ScriptRunner {
         if code != 0 {
             showErrorAlert(code: code, logs: output)
         }
+    }
+
+    // MARK: Arrêt manuel
+
+    /// Termine le script en cours **ainsi que tout son arbre de sous-process**.
+    ///
+    /// Utile pour les scripts qui ne se terminent jamais seuls (serveurs, watch,
+    /// boucles…). `process.terminate()` ne toucherait que le child direct (bash) —
+    /// un serveur lancé en dernière ligne du script serait alors orphelin et
+    /// continuerait à tourner. On énumère donc les descendants via sysctl et on
+    /// leur envoie SIGTERM, puis SIGKILL aux survivants après un court délai.
+    ///
+    /// Doit être appelé sur le main thread (déclenché depuis un item de menu).
+    func stop() {
+        guard !finished, process.isRunning else { return }
+        userCancelled = true
+
+        let root = childPID > 0 ? childPID : process.processIdentifier
+        guard root > 0 else {
+            process.terminate()
+            return
+        }
+
+        let tree = Self.processTree(root: root)
+        for pid in tree { kill(pid, SIGTERM) }
+
+        // Laisse 2 s pour un arrêt propre, puis force ceux qui restent.
+        queue.asyncAfter(deadline: .now() + 2.0) {
+            for pid in tree where kill(pid, 0) == 0 {
+                kill(pid, SIGKILL)
+            }
+        }
+    }
+
+    /// Renvoie `root` suivi de tous ses descendants (récursivement), en
+    /// s'appuyant sur la liste des process du système (sysctl KERN_PROC_ALL).
+    private static func processTree(root: pid_t) -> [pid_t] {
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        var size = 0
+        guard sysctl(&name, 4, nil, &size, nil, 0) == 0, size > 0 else { return [root] }
+
+        let count = size / MemoryLayout<kinfo_proc>.stride
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: count)
+        guard sysctl(&name, 4, &procs, &size, nil, 0) == 0 else { return [root] }
+        let actual = size / MemoryLayout<kinfo_proc>.stride
+
+        var childrenByParent: [pid_t: [pid_t]] = [:]
+        for p in procs.prefix(actual) {
+            childrenByParent[p.kp_eproc.e_ppid, default: []].append(p.kp_proc.p_pid)
+        }
+
+        var result: [pid_t] = []
+        var stack: [pid_t] = [root]
+        while let pid = stack.popLast() {
+            result.append(pid)
+            if let kids = childrenByParent[pid] { stack.append(contentsOf: kids) }
+        }
+        return result
     }
 
     // MARK: Affichages d'erreur

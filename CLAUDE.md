@@ -85,13 +85,13 @@ Un fichier = une responsabilité. Les sections internes restent délimitées par
 | `Models/ConfigStore.swift` | Singleton de persistance JSON (`config.json` : scripts + préférences) |
 | `Models/AppConfig.swift` | `AppConfig {scripts, preferences}` + `Preferences` (Codable tolérant) |
 | `Models/EditableParam.swift` | Classe mutable utilisée par l'éditeur (ref type pour mutation via cellules de tableau) |
-| `Helpers/ScriptHeaderParser.swift` | Parse les directives `# @param NAME[=DEFAULT] [description]` |
+| `Helpers/ScriptHeaderParser.swift` | Parse les directives `# @param NAME[:TYPE][=DEFAULT] [description]` (TYPE = `string` / `bool` / `enum(a\|b)`) |
 | `Helpers/ParamSerializer.swift` | Réécrit les `# @param` dans le fichier `.sh` (remplace en place ou insère après le shebang) |
 | `Helpers/ANSIParser.swift` | Convertit les séquences ANSI SGR en `NSAttributedString` |
 | `Helpers/QSLog.swift` | Helpers de chemins pour `~/Library/Application Support/QuickScript/logs/` |
 | `Helpers/PTY.swift` | `posix_openpt` + `grantpt` + `unlockpt` + termios — utilisé par `ScriptRunner` |
 | `Views/FlippedView.swift` | `NSView` avec `isFlipped = true` (coords top-down) |
-| `Dialogs/ParamInputDialog.swift` | `NSAlert` avec N text fields générés depuis les `@param` |
+| `Dialogs/ParamInputDialog.swift` | `NSAlert` avec un contrôle par `@param` : champ texte (string), case à cocher (bool), popup (enum) |
 | `Controllers/ScriptRunner.swift` | Exécution silencieuse via PTY, capture stdout/stderr, détection de prompt stdin, alerte d'erreur |
 | `Controllers/TerminalLauncher.swift` | Exécution dans Terminal.app/iTerm via AppleScript, wrap `script(1)` pour le log fichier |
 | `Controllers/LogWindowController.swift` | Fenêtre persistante par script, popup historique, NSTextView avec ANSI |
@@ -186,6 +186,8 @@ Outils exposés (`tools/list`, `tools/call`), identiques sur les deux transports
   `ParamSerializer`, enregistre dans le store + `rebuildMenu()`
 - `update_params` — réécrit les `@param` d'un script existant (id ou nom)
 - `run_script` — lance un script avec des valeurs de params, sans dialogue
+- `delete_script` — retire un script du store (id ou nom) ; `delete_file=true`
+  supprime aussi le `.sh` du disque (défaut : conservé)
 
 `AppDelegate` implémente `MCPToolHost`. **Toutes les méthodes du host sont
 appelées sur le main thread** (le serveur fait `DispatchQueue.main.sync` depuis
@@ -221,6 +223,30 @@ Le master est lu via `FileHandle.readabilityHandler` (callback async sur queue g
 
 Un `Timer` toutes les 250 ms vérifie `pendingPrompt` : si le contenu se termine par `: ? > ]` après ~350 ms d'inactivité, ou si inactivité > 2.5 s, on considère que c'est un prompt stdin et on affiche un `NSAlert` avec un text field. La réponse + `\n` est écrite sur le master FD.
 
+### Arrêter un script en cours (bouton « Stop »)
+
+Tant qu'un `ScriptRunner` (mode silencieux) tourne pour un script, son sous-menu
+affiche **« Stop »** au lieu de **« Run »** (+ une pastille verte `●` sur l'item
+racine), et le badge `(N)` de la status bar reste incrémenté. C'est le cas
+typique d'un serveur qui ne se termine jamais seul.
+
+`AppDelegate.stopScript(_:)` retrouve le(s) runner(s) actif(s) du script via
+`runningRunners(for:)` (filtre `runnersByID` sur `ScriptRunner.scriptID`) et
+appelle `ScriptRunner.stop()`. La bascule Stop→Run se fait via le callback
+`onFinish` du runner (retrait de `runnersByID`/`runningRunners` + `rebuildMenu()`),
+et Run→Stop via le `rebuildMenu()` ajouté juste après l'insertion du runner dans
+`launch(...)`.
+
+`ScriptRunner.stop()` ne se contente **pas** de `process.terminate()` (qui ne
+tuerait que le child direct, `bash`, laissant un serveur lancé en dernière ligne
+orphelin). Il énumère tout l'arbre de descendants du child via
+`sysctl(KERN_PROC_ALL)` (`processTree(root:)`), envoie `SIGTERM` à chacun, puis
+`SIGKILL` aux survivants après 2 s. Il pose `userCancelled = true` → à la
+terminaison, le log indique « cancelled by user » sans alerte d'erreur.
+
+⚠️ Uniquement en **mode silencieux**. En mode terminal (Terminal.app/iTerm), le
+process vit hors de l'app : aucun runner n'est suivi, donc pas de bouton Stop.
+
 ### Mode terminal (TerminalLauncher)
 
 Construit une commande shell unique :
@@ -255,6 +281,8 @@ Le wrap `script -q -a` (utilitaire BSD `script(1)`) capture toute la session ter
 Les `@param` du script sont passés en arguments CLI (`$1`, `$2`, …) — **jamais** mélangés avec les fichiers du Quick Action (qui ne sont pas dans argv).
 
 **Convention flag-style** : si le NAME d'un `@param` commence par `-` (ex : `# @param -service NAME`), QuickScript passe `-service value` au lieu de juste `value`. Pour les scripts qui parsent leurs args via `while case $1 in -flag) …`, c'est la voie naturelle. Si la valeur fournie est vide, le flag n'est pas émis du tout (flag optionnel non utilisé). Logique dans `AppDelegate.launch(...)`.
+
+**Types de paramètres** : `# @param NAME[:TYPE][=DEFAULT]`, TYPE ∈ `string` (défaut, omis à la sérialisation), `bool`, `enum(a|b|c)`. Modèle : `ParamType` dans `Models/Script.swift` (`parse`, `spec`). Un bool est toujours passé `true`/`false` (donc un flag bool est toujours émis). `ScriptParam.normalized(_:)` est utilisé par les lancements programmatiques (MCP GUI + headless) pour normaliser les valeurs (ex. JSON `true` → `"1"` → `"true"`). Côté MCP, un param porte `type` (`string`/`bool`/`enum`) + `options` (cf. `MCPCore.paramType(from:)`). Un `:xxx` qui n'est pas un type valide reste dans le nom (rétrocompat). Les valeurs d'enum ne peuvent pas contenir d'espace (le header est découpé au 1ᵉʳ espace).
 
 ## Persistance
 

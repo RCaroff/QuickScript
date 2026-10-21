@@ -111,9 +111,30 @@ final class MCPCore {
                 values: values,
                 inTerminal: args["in_terminal"] as? Bool ?? false
             )
+        case "delete_script":
+            return host.mcpDeleteScript(
+                target: (args["id"] as? String) ?? (args["name"] as? String),
+                deleteFile: args["delete_file"] as? Bool ?? false
+            )
         default:
             return MCPToolOutcome.error("Outil inconnu : \(name)")
         }
+    }
+
+    // MARK: Types de paramètres
+
+    /// Lit le type d'un paramètre depuis sa représentation JSON MCP
+    /// (`type` = string/bool/enum + `options`, ou la forme courte
+    /// `enum(a|b)`). Type absent ou invalide → `.string`.
+    static func paramType(from dict: [String: Any]) -> ParamType {
+        let raw = (dict["type"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        if raw.lowercased() == "enum" {
+            let options = (dict["options"] as? [Any] ?? [])
+                .map { String(describing: $0).trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            return options.isEmpty ? .string : .enumeration(options)
+        }
+        return ParamType.parse(raw) ?? .string
     }
 
     // MARK: Définitions d'outils
@@ -124,8 +145,12 @@ final class MCPCore {
             "properties": [
                 "name": ["type": "string",
                          "description": "Nom du paramètre. S'il commence par '-' (ex: -service), il est passé en flag (-service valeur) ; sinon positionnel ($1, $2…)."],
-                "default": ["type": "string", "description": "Valeur par défaut (optionnel)."],
-                "description": ["type": "string", "description": "Description libre (optionnel)."]
+                "default": ["type": "string", "description": "Valeur par défaut (optionnel). Pour un bool : 'true' ou 'false'. Pour un enum : une des options."],
+                "description": ["type": "string", "description": "Description libre (optionnel)."],
+                "type": ["type": "string", "enum": ["string", "bool", "enum"],
+                         "description": "Type du paramètre, qui détermine le contrôle au lancement : 'string' (champ texte, défaut), 'bool' (case à cocher, valeur true/false), 'enum' (liste déroulante, nécessite 'options')."],
+                "options": ["type": "array", "items": ["type": "string"],
+                            "description": "Valeurs possibles pour un paramètre de type 'enum' (sans espaces ni '|')."]
             ],
             "required": ["name"]
         ]
@@ -172,6 +197,18 @@ final class MCPCore {
                         "name": ["type": "string", "description": "Nom du script si l'id n'est pas fourni."],
                         "values": ["type": "object", "description": "Dictionnaire {nom_param: valeur}. Les paramètres absents prennent leur valeur par défaut."],
                         "in_terminal": ["type": "boolean", "description": "true pour lancer dans Terminal/iTerm (mode GUI uniquement), sinon mode silencieux (défaut false)."]
+                    ]
+                ]
+            ],
+            [
+                "name": "delete_script",
+                "description": "Supprime un script enregistré dans QuickScript (le retire de la liste/menu). Identifier par 'id' ou 'name'. Par défaut le fichier .sh est conservé sur le disque ; passer delete_file=true pour l'effacer aussi.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "id": ["type": "string", "description": "UUID du script (prioritaire sur name)."],
+                        "name": ["type": "string", "description": "Nom du script si l'id n'est pas fourni."],
+                        "delete_file": ["type": "boolean", "description": "true pour supprimer aussi le fichier .sh du disque (défaut false : le fichier est conservé)."]
                     ]
                 ]
             ]

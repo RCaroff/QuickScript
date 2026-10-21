@@ -83,6 +83,9 @@ enum ParamSerializer {
 
     private static func format(_ p: ScriptParam) -> String {
         var s = "# @param \(p.name)"
+        if p.type != .string {
+            s += ":\(p.type.spec)"
+        }
         if let def = p.defaultValue, !def.isEmpty {
             s += "=\(def)"
         }

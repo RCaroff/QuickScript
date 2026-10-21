@@ -158,6 +158,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             : "QuickScript — \(runningRunners.count) running script(s)"
     }
 
+    // MARK: Runners actifs
+
+    /// Renvoie les `ScriptRunner` en cours d'exécution (mode silencieux) pour un
+    /// script donné. Sert à décider si le menu affiche « Run » ou « Stop ».
+    private func runningRunners(for scriptID: UUID) -> [ScriptRunner] {
+        runnersByID.values.filter { $0.scriptID == scriptID }
+    }
+
     // MARK: Menu
 
     private func rebuildMenu() {
@@ -181,6 +189,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     keyEquivalent: ""
                 )
                 item.representedObject = script.id.uuidString
+
+                // Un runner (mode silencieux) tourne-t-il pour ce script ? Si oui,
+                // le sous-menu propose « Stop » au lieu de « Run », et on affiche
+                // une pastille verte sur l'item racine.
+                let isRunning = !runningRunners(for: script.id).isEmpty
+                let runningDot = isRunning
+                    ? NSAttributedString(string: "  ●",
+                                         attributes: [.foregroundColor: NSColor.systemGreen])
+                    : nil
 
                 // Affiche l'extension du script en gris, alignée à droite,
                 // juste avant la flèche de disclosure du sous-menu. On utilise
@@ -210,27 +227,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             .paragraphStyle: paragraph
                         ]
                     ))
+                    if let dot = runningDot { title.append(dot) }
+                    item.attributedTitle = title
+                } else if let dot = runningDot {
+                    let title = NSMutableAttributedString(
+                        string: script.name,
+                        attributes: [.foregroundColor: NSColor.labelColor]
+                    )
+                    title.append(dot)
                     item.attributedTitle = title
                 }
 
                 let submenu = NSMenu()
                 submenu.autoenablesItems = false
 
-                let execute = NSMenuItem(title: "Run",
-                                         action: #selector(runScript(_:)),
-                                         keyEquivalent: "")
-                execute.target = self
-                execute.representedObject = script.id.uuidString
-                submenu.addItem(execute)
+                if isRunning {
+                    // Le process ne s'est pas (encore) terminé : on propose de le
+                    // tuer plutôt que d'en relancer un.
+                    let stop = NSMenuItem(title: "Stop",
+                                          action: #selector(stopScript(_:)),
+                                          keyEquivalent: "")
+                    stop.target = self
+                    stop.representedObject = script.id.uuidString
+                    stop.toolTip = "Termine le process en cours et tout son arbre de sous-process."
+                    submenu.addItem(stop)
+                } else {
+                    let execute = NSMenuItem(title: "Run",
+                                             action: #selector(runScript(_:)),
+                                             keyEquivalent: "")
+                    execute.target = self
+                    execute.representedObject = script.id.uuidString
+                    submenu.addItem(execute)
 
-                let executeTerminal = NSMenuItem(title: "Run in terminal",
-                                                 action: #selector(runScriptInTerminal(_:)),
-                                                 keyEquivalent: "")
-                executeTerminal.target = self
-                executeTerminal.representedObject = script.id.uuidString
-                executeTerminal.isAlternate = true
-                executeTerminal.keyEquivalentModifierMask = .option
-                submenu.addItem(executeTerminal)
+                    let executeTerminal = NSMenuItem(title: "Run in terminal",
+                                                     action: #selector(runScriptInTerminal(_:)),
+                                                     keyEquivalent: "")
+                    executeTerminal.target = self
+                    executeTerminal.representedObject = script.id.uuidString
+                    executeTerminal.isAlternate = true
+                    executeTerminal.keyEquivalentModifierMask = .option
+                    submenu.addItem(executeTerminal)
+                }
 
                 let reveal = NSMenuItem(title: "Reveal in Finder",
                                         action: #selector(revealInFinder(_:)),
@@ -542,6 +579,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launch(script: script)
     }
 
+    /// Tue le(s) runner(s) en cours pour ce script (bouton « Stop »).
+    @objc private func stopScript(_ sender: NSMenuItem) {
+        guard
+            let idStr = sender.representedObject as? String,
+            let id = UUID(uuidString: idStr)
+        else { return }
+        for runner in runningRunners(for: id) {
+            runner.stop()
+        }
+        // La bascule Stop→Run se fera via le callback onFinish du runner
+        // (removeValue + rebuildMenu) quand le process aura effectivement quitté.
+    }
+
     /// Lance un script.
     /// - `contextFiles` (Quick Action sur sélection) : exposé via `$QS_CONTEXT_FILE_PATH`
     ///   (un chemin par ligne).
@@ -567,7 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !params.isEmpty {
             let values: [String]
             if let preset = presetValues {
-                values = params.map { preset[$0.name] ?? $0.defaultValue ?? "" }
+                values = params.map { $0.normalized(preset[$0.name]) }
             } else {
                 guard let collected = ParamInputDialog.collect(params: params, scriptName: script.name) else {
                     return
@@ -628,12 +678,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runningRunners.insert(token)
         runnersByID[token] = runner
         updateStatusIcon()
+        rebuildMenu()   // bascule « Run » → « Stop » pour ce script
 
         runner.run { [weak self] in
             DispatchQueue.main.async {
                 self?.runningRunners.remove(token)
                 self?.runnersByID.removeValue(forKey: token)
                 self?.updateStatusIcon()
+                self?.rebuildMenu()   // rebascule « Stop » → « Run »
             }
         }
     }
@@ -1061,13 +1113,19 @@ extension AppDelegate: MCPToolHost {
               !name.isEmpty else { return nil }
         let def = (dict["default"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let desc = (dict["description"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        return ScriptParam(name: name, defaultValue: def, description: desc)
+        return ScriptParam(name: name, defaultValue: def, description: desc,
+                           type: MCPCore.paramType(from: dict))
     }
 
     private func paramJSON(_ p: ScriptParam) -> [String: Any] {
         var d: [String: Any] = ["name": p.name]
         if let v = p.defaultValue { d["default"] = v }
         if let v = p.description { d["description"] = v }
+        switch p.type {
+        case .string: d["type"] = "string"
+        case .bool: d["type"] = "bool"
+        case .enumeration(let options): d["type"] = "enum"; d["options"] = options
+        }
         return d
     }
 
@@ -1150,6 +1208,37 @@ extension AppDelegate: MCPToolHost {
             "ok": true,
             "launched": script.name,
             "mode": inTerminal ? "terminal" : "silent"
+        ])
+    }
+
+    func mcpDeleteScript(target: String?, deleteFile: Bool) -> MCPToolOutcome {
+        guard let script = resolveScript(target) else {
+            return .error("Script introuvable pour : \(target ?? "(vide)")")
+        }
+
+        // Ferme et retire la fenêtre de logs éventuelle avant de supprimer.
+        if let win = logWindows.removeValue(forKey: script.id) {
+            win.window?.close()
+        }
+
+        var fileDeleted = false
+        if deleteFile, FileManager.default.fileExists(atPath: script.path) {
+            do {
+                try FileManager.default.removeItem(atPath: script.path)
+                fileDeleted = true
+            } catch {
+                return .error("Suppression du fichier impossible : \(error.localizedDescription)")
+            }
+        }
+
+        ConfigStore.shared.remove(id: script.id)
+        rebuildMenu()
+
+        return .ok([
+            "ok": true,
+            "deleted": script.name,
+            "id": script.id.uuidString,
+            "fileDeleted": fileDeleted
         ])
     }
 }

@@ -16,6 +16,7 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
 
     private let positionColID = NSUserInterfaceItemIdentifier("position")
     private let nameColID = NSUserInterfaceItemIdentifier("name")
+    private let typeColID = NSUserInterfaceItemIdentifier("type")
     private let defaultColID = NSUserInterfaceItemIdentifier("default")
     private let descColID = NSUserInterfaceItemIdentifier("description")
 
@@ -29,7 +30,7 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         self.onClose = onClose
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 440),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 440),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -63,6 +64,7 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
             "These lines will be written as « # @param … » directives in the script. " +
             "Prefix the name with « - » (e.g. -service) to pass the value as a flag " +
             "(-service value) instead of a positional argument. " +
+            "Type: empty/string (text field), bool (checkbox) or enum(a|b|c) (drop-down list). " +
             "Drag & drop to reorder.")
         subtitle.font = NSFont.systemFont(ofSize: 11)
         subtitle.textColor = NSColor.secondaryLabelColor
@@ -184,6 +186,12 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         nameCol.minWidth = 80
         tableView.addTableColumn(nameCol)
 
+        let typeCol = NSTableColumn(identifier: typeColID)
+        typeCol.title = "Type"
+        typeCol.width = 120
+        typeCol.minWidth = 60
+        tableView.addTableColumn(typeCol)
+
         let defaultCol = NSTableColumn(identifier: defaultColID)
         defaultCol.title = "Default value"
         defaultCol.width = 140
@@ -230,6 +238,16 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         // Filtre les lignes sans nom — un @param sans nom n'a aucun sens
         let cleaned = params.filter {
             !$0.name.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        // Valide les types (un type invalide serait silencieusement ignoré).
+        if let bad = cleaned.first(where: { $0.parsedType == nil }) {
+            let alert = NSAlert()
+            alert.messageText = "Invalid type for « \(bad.name) »"
+            alert.informativeText = "« \(bad.typeText) » is not a valid type. " +
+                "Use string (or leave empty), bool, or enum(value1|value2|…) — values without spaces."
+            alert.addButton(withTitle: "OK")
+            _ = alert.runModal()
+            return
         }
         let asScriptParams = cleaned.map { $0.toScriptParam() }
 
@@ -320,6 +338,10 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
             field.stringValue = p.name
             field.placeholderString = "name"
             field.isEditable = true
+        case typeColID:
+            field.stringValue = p.typeText
+            field.placeholderString = "string"
+            field.isEditable = true
         case defaultColID:
             field.stringValue = p.defaultValue
             field.placeholderString = "default value"
@@ -364,6 +386,7 @@ final class ParamEditorWindowController: NSWindowController, NSTableViewDataSour
         let value = sender.stringValue
         let p = params[row]
         if identifier == nameColID { p.name = value }
+        else if identifier == typeColID { p.typeText = value }
         else if identifier == defaultColID { p.defaultValue = value }
         else if identifier == descColID { p.descText = value }
     }

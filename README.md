@@ -1,145 +1,218 @@
 # QuickScript
 
-Petit utilitaire macOS qui vit dans la barre des menus et permet d'enregistrer des scripts (bash, python, ruby, node, ...) pour les **exécuter silencieusement en un clic**, sans terminal.
+A tiny macOS menu bar app to register your scripts (bash, Python, Ruby, Node, …) and **run them in one click**: silently in the background, in a Terminal window, or straight from the Finder's context menu.
 
-## Comportement (v2)
+- Native Swift + AppKit, no dependencies, no Xcode project
+- Typed parameters: text fields, checkboxes and drop-down lists generated from a comment header
+- Automatic detection of interactive `stdin` prompts
+- Per-run log files and a live logs window with history
+- Finder Services to run a script on the selected files or in the current folder
+- Built-in **MCP server** so an AI assistant (e.g. Claude) can create, edit and run your scripts
 
-L'app fait apparaître `⚡` dans la barre des menus. Pendant qu'un ou plusieurs scripts tournent, le titre devient `⚡(N)`.
+## Requirements
 
-Quand tu cliques sur un script dans le menu :
+- macOS 11 (Big Sur) or later
+- Xcode Command Line Tools (`xcode-select --install`), needed to compile
 
-- Si le script déclare des **paramètres** via `# @param`, une fenêtre s'ouvre avec un text field par paramètre. La valeur entrée est passée au script comme argument (`$1`, `$2`, ...).
-- Sinon, le script démarre directement, en arrière-plan.
-- **stdout / stderr** sont capturés. Aucune fenêtre n'apparaît tant que le script ne produit pas d'erreur.
-- Si le script lit `stdin` (`read` en bash, `input()` en python...), l'app le détecte automatiquement et ouvre une fenêtre native avec un text field. La réponse est envoyée à `stdin` du script.
-- Si le script termine avec un **code de sortie ≠ 0**, une alerte s'affiche avec stdout + stderr dans une zone de texte scrollable et un bouton « Copier les logs ».
-- Si le script termine avec **code 0**, c'est silencieux : tu ne vois rien.
+## Installation
 
-Le sous-menu de chaque entrée permet de **révéler dans le Finder**, **renommer**, ou **supprimer**. Si le fichier a été déplacé/supprimé depuis l'import, l'app propose au clic de relier le script ou de retirer l'entrée.
+```bash
+git clone https://github.com/RCaroff/QuickScript.git
+cd QuickScript
+./build.sh --install
+```
 
-## Déclarer des paramètres : `# @param`
+| Command | Effect |
+|---------|--------|
+| `./build.sh` | Builds `build/QuickScript.app` |
+| `./build.sh --run` | Builds, then launches the app |
+| `./build.sh --install` | Builds, copies the app to `~/Applications` **and** `/Applications` (asks for your password via `sudo`), refreshes the Services menu and restarts Dock/Finder |
 
-Place une ou plusieurs lignes en tête de script (après le shebang, avant le code) :
+The app is ad-hoc signed for local use. It has no Dock icon: look for **⚡** in the menu bar.
+
+## Usage
+
+### The menu
+
+While scripts are running, the menu bar icon becomes `⚡(N)`.
+
+Each registered script has a submenu:
+
+| Item | Action |
+|------|--------|
+| **Run** | Runs the script silently (hold **⌥ Option** to show **Run in terminal**) |
+| **Stop** | Replaces *Run* while the script is running. Kills the script and all its child processes |
+| **Reveal in Finder** | Shows the script file |
+| **Show / Hide logs window** | Live output and history of past runs |
+| **Edit parameters…** | Graphical editor for the `@param` header (see below) |
+| **Rename… / Delete** | Rename the entry or remove it from the list (the file itself is kept) |
+
+The bottom of the menu has:
+
+- **Add a script…**: register existing script files.
+- **Create new bash script…**: create an empty script and register it.
+- **Open config.json** (hold **⌥** for **Show config.json**).
+- **Refresh**: reload the configuration after editing it by hand.
+- **Always run in terminal** and **Always show logs window at run**: global preferences.
+- **Enable MCP server** and **Configure MCP port…**: see [MCP server](#mcp-server).
+
+If a script file was moved or deleted, clicking it lets you pick its new location or remove the entry.
+
+### Silent mode (default)
+
+- The script runs in the background. stdout and stderr are captured.
+- If it exits with **code 0**, nothing is shown.
+- If it exits with a **non-zero code**, an alert shows the output with a **Copy logs** button.
+- If it waits for input on `stdin` (`read` in bash, `input()` in Python…), a native dialog asks for the value and sends it to the script (see [Interactive prompts](#interactive-prompts)).
+
+### Terminal mode
+
+**Run in terminal** (or the *Always run in terminal* preference) opens the script in iTerm if it's installed, otherwise in Terminal.app. The session is still recorded to the log file. The **Stop** button isn't available in this mode, since the process lives outside QuickScript.
+
+## Script parameters: `# @param`
+
+Declare parameters in comment lines at the top of the script, after the shebang and before the first line of code. When you click **Run**, QuickScript shows a dialog with one control per parameter and passes the values to the script as arguments.
 
 ```bash
 #!/usr/bin/env bash
-# @param filename=note.txt   Nom du fichier
-# @param content             Contenu (laisser vide pour fichier vide)
+# @param filename=note.txt               File name
+# @param content                         File content (may be empty)
+# @param -env:enum(dev|staging|prod)=dev Target environment
+# @param -dry_run:bool=true              Simulate without changing anything
 ```
 
-Syntaxe :
+### Syntax
 
 ```
-# @param NAME[=DEFAULT] [description libre jusqu'à la fin de la ligne]
+# @param NAME[:TYPE][=DEFAULT] [free description until end of line]
 ```
 
-- `NAME` : nom du paramètre (affiché comme label)
-- `=DEFAULT` (optionnel) : valeur pré-remplie dans le text field
-- Description (optionnelle) : tout texte qui suit, affiché à côté du label
+| Part | Meaning |
+|------|---------|
+| `NAME` | Parameter name, shown as the label |
+| `:TYPE` | Optional. Control shown in the dialog (see below) |
+| `=DEFAULT` | Optional. Pre-filled value |
+| description | Optional. Shown next to the label |
 
-Le parser accepte aussi `// @param` (utile pour les scripts JS).
+`// @param` is accepted too (handy for JavaScript).
 
-L'ordre de déclaration = l'ordre dans lequel les valeurs sont passées au script (`$1`, `$2`, ...).
+### Types
 
-## Détection des prompts stdin (heuristique)
+| Type | Control | Value passed to the script |
+|------|---------|----------------------------|
+| `string` (default) | Text field | The text entered |
+| `bool` | Checkbox | `true` or `false` |
+| `enum(a\|b\|c)` | Drop-down list | The selected option |
 
-L'app monitore le buffer stdout. Si le script écrit du texte **sans saut de ligne final** et reste **idle plus de ~350 ms**, et que le texte se termine par `:` `?` `>` ou `]` (typiquement `Name: ` ou `Continue ? `), une fenêtre de saisie s'ouvre. Au-delà de 2,5 s d'inactivité, l'app prompte même sans caractère « prompt-like ».
+- A `bool` default must be `true` or `false`. Without a default, the box is unchecked.
+- An `enum` default must be one of the options. Otherwise the first option is selected.
+- Enum values can't contain spaces or `|`.
 
-Quirks à connaître :
-- **Python** : l'app force `PYTHONUNBUFFERED=1` pour que `input("Name: ")` flushe le prompt avant de bloquer. Sans ça, Python attendrait un `\n` qui ne viendrait jamais.
-- Si ton script imprime une longue ligne progressive sans `\n` (barre de progression, etc.), il peut être confondu avec un prompt — clique « Annuler le script » et ajoute un `\n` ou refacto pour utiliser des paramètres `@param`.
+### Positional or flag arguments
 
-## Build
+- **Positional** (default): values are passed in declaration order, as `$1`, `$2`, …
+- **Flag**: if the name starts with `-` (e.g. `-env`), QuickScript passes `-env value`. An empty value means the flag isn't passed at all. A `bool` always has a value, so its flag is always passed.
 
-Prérequis : les Command Line Tools (`xcode-select --install`).
+A flag-style script usually parses its arguments like this:
 
 ```bash
-cd QuickScript
-./build.sh             # produit build/QuickScript.app
-./build.sh --run       # build puis ouvre l'app
-./build.sh --install   # copie dans ~/Applications/
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -env)     ENV="$2"; shift 2 ;;
+    -dry_run) DRY_RUN="$2"; shift 2 ;;
+    *) echo "Unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
 ```
 
-## Quick Actions dans le Finder
+### Parameter editor
 
-QuickScript déclare deux Services système :
+**Edit parameters…** opens a table where you can add, remove, edit and reorder (drag and drop) parameters, including their type (empty or `string`, `bool`, `enum(a|b|c)`). Saving rewrites the `# @param` lines in the script file. The rest of the file is left untouched.
 
-### « Exécuter avec QuickScript… » — sur une sélection de fichiers
+## Interactive prompts
 
-Clic droit sur un ou plusieurs fichiers dans le Finder → **Services** → **Exécuter avec QuickScript…**. Un picker apparaît pour choisir le script ; les chemins des fichiers sélectionnés sont exposés au script via la variable d'environnement `QS_CONTEXT_FILE_PATH` (un chemin par ligne).
+In silent mode, scripts run in a pseudo-terminal, so `read -p`, `input()` and similar calls behave as they would in a terminal. QuickScript shows an input dialog when the output:
 
-Exemple — fichier unique :
+- ends without a newline, has been idle for about 350 ms, and its last character is `:`, `?`, `>` or `]` (e.g. `Name: `), or
+- has been idle for more than 2.5 s without a newline.
+
+Good to know:
+
+- `PYTHONUNBUFFERED=1` is set so that Python prints its prompt before blocking.
+- This detection is a heuristic. A script that prints a progress line without `\n` and then works for a while can trigger a false prompt. Click **Cancel script**, or end such lines with `\n`. When you can, prefer `@param` over runtime prompts.
+
+## Finder integration (Services)
+
+QuickScript adds two entries to the Finder's **Services** menu. Both show a picker to choose which script to run.
+
+| Service | Where to right-click | What the script receives |
+|---------|----------------------|--------------------------|
+| **Run with QuickScript…** | On one or more selected files | `QS_CONTEXT_FILE_PATH`: the selected paths, one per line |
+| **Run with QuickScript here…** | On an empty area of a Finder window or the Desktop | `QS_CONTEXT_TARGET_PATH`: the folder being shown |
+
+Command-line arguments stay reserved for the `@param` values. Context is passed through environment variables only.
 
 ```bash
-file="$QS_CONTEXT_FILE_PATH"
-echo "Selected: $file"
-```
-
-Exemple — sélection multiple, itération :
-
-```bash
+# Iterate over selected files
 while IFS= read -r f; do
-    echo "Processing $f"
+  echo "Processing $f"
 done <<< "$QS_CONTEXT_FILE_PATH"
-```
 
-Les arguments CLI restent réservés aux valeurs des `@param` du script — la Quick Action ne les pollue plus.
-
-### « Exécuter avec QuickScript ici… » — clic droit dans le vide
-
-Clic droit dans une zone vide d'une fenêtre du Finder ou du Bureau → **Services** → **Exécuter avec QuickScript ici…**. Idem pour le picker, mais cette fois le chemin du dossier courant est exposé au script via la variable d'environnement `QS_CONTEXT_TARGET_PATH` (pas en argument CLI).
-
-Exemple dans un script bash :
-
-```bash
+# Work in the current Finder folder
 target="${QS_CONTEXT_TARGET_PATH:-$HOME/Desktop}"
-touch "$target/nouveau-fichier.txt"
+touch "$target/new-file.txt"
 ```
 
-Pour récupérer le dossier visible, QuickScript interroge le Finder via AppleScript (`insertion location`). macOS demande la permission d'automation au premier déclenchement — accepte, c'est ponctuel. Réglable plus tard dans *Réglages Système → Confidentialité et sécurité → Automatisation*.
+The *here* service asks the Finder for its current folder through AppleScript. macOS asks for Automation permission the first time. You can change it later in *System Settings → Privacy & Security → Automation*.
 
-### Faire apparaître le Service
+**The Services don't show up?** macOS refreshes the Services menu lazily, and recent versions hide third-party services by default.
 
-Sur macOS le menu Services n'est rafraîchi qu'occasionnellement. Si tu ne le vois pas après le build :
+1. Run `./build.sh --install`. If that's not enough: `/System/Library/CoreServices/pbs -update && killall Finder`.
+2. Enable them in *System Settings → Keyboard → Keyboard Shortcuts → Services → Files and Folders*.
 
-```bash
-./build.sh --install   # copie l'app dans ~/Applications + rafraîchit pbs
+## Environment variables
+
+| Variable | When | Content |
+|----------|------|---------|
+| `QS_CONTEXT_FILE_PATH` | *Run with QuickScript…* | Selected file paths, one per line |
+| `QS_CONTEXT_TARGET_PATH` | *Run with QuickScript here…* | Folder shown in the Finder |
+| `PYTHONUNBUFFERED=1` | Silent mode | Python prompts are printed immediately |
+| `TERM=dumb` | Silent mode | Discourages ANSI color codes |
+
+⚠️ Scripts launched from the app start with `$PWD` set to `/`. Never use `$PWD` as an implicit target folder. Use `QS_CONTEXT_TARGET_PATH` or an explicit `@param` instead.
+
+## Supported interpreters
+
+| Extension | Interpreter |
+|-----------|-------------|
+| `.sh`, `.bash` | `bash` |
+| `.zsh` | `zsh` |
+| `.py` | `python3` |
+| `.rb` | `ruby` |
+| `.js`, `.mjs` | `node` |
+| `.pl` | `perl` |
+| `.php` | `php` |
+| other (executable bit + shebang) | executed directly |
+
+Interpreters are resolved through `/usr/bin/env`, using the `PATH` the app inherits. That `PATH` is usually more limited than your shell's, so use absolute paths for tools installed in unusual locations.
+
+## Logs
+
+Every run writes a new log file:
+
+```
+~/Library/Application Support/QuickScript/logs/<script name>/<script name>-YYYY-MM-DD_HHMMSS.log
 ```
 
-Si ça ne suffit pas :
+It contains a header (script, arguments, context), the full output, and the exit code. The **logs window** shows the output of the current run live, and its history menu lets you reopen past runs.
 
-```bash
-/System/Library/CoreServices/pbs -update
-killall Finder        # relance Finder pour qu'il rescan
-```
+## Configuration
 
-Le Service peut aussi être désactivé : *Réglages Système → Clavier → Raccourcis clavier → Services → Fichiers et dossiers*, vérifier que « Exécuter avec QuickScript… » est coché.
-
-## Scripts de test fournis
-
-Dans `test-scripts/` :
-
-- `new-file.sh` — `@param` (target_dir + filename + content), crée un fichier
-- `interactive-prompt.sh` — prompts runtime (3x `read -rp`)
-- `error-demo.sh` — sort en erreur (code 1) avec stdout/stderr, déclenche l'alerte
-- `silent-ok.sh` — exécution silencieuse complète (`touch` + exit 0)
-- `files-info.sh` — démontre la Quick Action « sur sélection » : lit `$QS_CONTEXT_FILE_PATH` et log les fichiers reçus sur `~/Desktop/quickscript-files.log`
-- `new-file-here.sh` — démontre la Quick Action « ici » : crée un fichier dans `$QS_CONTEXT_TARGET_PATH`
-
-Pour les tester : `Ajouter un script…` → choisir un des fichiers → cliquer sur l'entrée nouvellement apparue dans le menu. Pour `files-info.sh`, après l'avoir ajouté, fais clic droit sur n'importe quel fichier du Finder → Services → Exécuter avec QuickScript… → choisis `files-info`.
-
-## Stockage
-
-Toute la configuration (liste des scripts **et** préférences : *always run in
-terminal*, *always show logs window*, activation et port du serveur MCP) est
-persistée dans un seul fichier :
+Everything (the script list and the preferences) lives in one JSON file:
 
 ```
 ~/Library/Application Support/QuickScript/config.json
 ```
-
-JSON lisible et éditable à la main (cliquer *Refresh* dans le menu après une
-édition externe). Forme :
 
 ```json
 {
@@ -150,51 +223,38 @@ JSON lisible et éditable à la main (cliquer *Refresh* dans le menu après une
     "mcpServerPort": 8765
   },
   "scripts": [
-    { "id": "UUID", "name": "Mon script", "path": "/abs/path/script.sh" }
+    { "id": "UUID", "name": "My script", "path": "/absolute/path/script.sh" }
   ]
 }
 ```
 
-Migration automatique depuis l'ancien `scripts.json` (+ préférences `UserDefaults`)
-au premier lancement.
+You can edit it by hand. Click **Refresh** in the menu afterwards. Parameters aren't stored here: they're read from each script's `# @param` header.
 
-## Interpréteurs reconnus
+## MCP server
 
-| extension | interpréteur |
-|-----------|--------------|
-| `.py` | `python3` |
-| `.sh`, `.bash` | `bash` |
-| `.zsh` | `zsh` |
-| `.rb` | `ruby` |
-| `.js`, `.mjs` | `node` |
-| `.pl` | `perl` |
-| `.php` | `php` |
-| autre, bit exécutable + shebang | exec direct |
+QuickScript includes a [Model Context Protocol](https://modelcontextprotocol.io) server so an AI assistant can manage and run your scripts.
 
-Tous sont lancés via `/usr/bin/env`, donc tout interpréteur trouvable dans le `PATH` hérité de l'app fonctionnera.
+| Tool | Description |
+|------|-------------|
+| `list_scripts` | Lists scripts with their parameters (name, type, options, default, description) |
+| `add_script` | Creates a new script from its content and parameter list |
+| `update_params` | Replaces a script's `@param` header |
+| `run_script` | Runs a script with parameter values, without any dialog |
+| `delete_script` | Removes a script from the list (optionally deletes the file) |
 
-## Serveur MCP — piloter QuickScript depuis une IA
+A parameter is described as `{ "name", "type": "string" | "bool" | "enum", "options": [...], "default", "description" }`.
 
-QuickScript expose un serveur **MCP (Model Context Protocol)** permettant à une
-IA (ex : Claude) d'ajouter, modifier et lancer des scripts. Deux transports sont
-disponibles :
+⚠️ `run_script` runs code on your machine. Only connect assistants you trust, and review what they ask to run.
 
-- **stdio** (recommandé pour Claude Desktop) : le client lance le binaire en mode
-  headless, aucune UI. Activé par l'argument `--mcp-stdio`.
-- **HTTP local** (Streamable HTTP, loopback `127.0.0.1`) : activable depuis le
-  menu de la barre de statut (*Enable MCP server*), port réglable via
-  *Configure MCP port…* (défaut `8765`).
+Two transports are available:
 
-Outils exposés : `list_scripts`, `add_script`, `update_params`, `run_script`.
+- **stdio** (recommended): the client starts `QuickScript --mcp-stdio` in headless mode, with no UI. `run_script` waits for the script to finish and returns `exitCode`, `stdout` and `stderr`. Terminal mode isn't available.
+- **Local HTTP** (Streamable HTTP on `127.0.0.1` only): turn it on with **Enable MCP server** in the menu. The default port is `8765`; change it with **Configure MCP port…**.
 
-### Brancher Claude Desktop (mode stdio)
+### Connect Claude Desktop (stdio)
 
-1. Installer l'app : `./build.sh --install` (le binaire doit être à
-   `/Applications/QuickScript.app/Contents/MacOS/QuickScript`).
-
-2. Ouvrir la config via **Claude Desktop → Réglages → Developer → Edit Config**
-   (c'est ce fichier qui fait foi), puis y ajouter la clé `mcpServers` **au
-   niveau racine**, sans toucher au reste du contenu existant :
+1. Install the app with `./build.sh --install`, so the binary is at `/Applications/QuickScript.app/Contents/MacOS/QuickScript`.
+2. In Claude Desktop, open **Settings → Developer → Edit Config**. Add a `mcpServers` key at the root of the file and keep the existing content:
 
    ```json
    {
@@ -207,37 +267,56 @@ Outils exposés : `list_scripts`, `add_script`, `update_params`, `run_script`.
    }
    ```
 
-3. **Quitter complètement Claude Desktop (Cmd+Q)** puis le relancer — la config
-   n'est lue qu'au démarrage ; fermer la fenêtre ne suffit pas.
+3. **Quit Claude Desktop completely (⌘Q)** and relaunch it. The config is only read at startup.
+4. The tools show up under **Developer** and in the tools menu of the message box. Local stdio servers don't appear on the *Connectors* page.
 
-4. Les outils apparaissent dans **Developer** et via l'icône outils de la zone de
-   saisie. Un serveur stdio local **n'apparaît pas** dans la page « Connecteurs »
-   (réservée aux connecteurs distants/OAuth).
+The headless server and the menu bar app share `config.json`. After an assistant adds a script, click **Refresh** in the menu to see it.
 
-En mode stdio, `run_script` s'exécute de façon synchrone et renvoie
-`exitCode` / `stdout` / `stderr` à l'IA (le mode terminal n'y est pas disponible).
-Le store `scripts.json` est partagé avec une éventuelle instance GUI ; après un
-ajout via l'IA, cliquer *Refresh* dans le menu pour rafraîchir l'affichage.
+### Troubleshooting
 
-### Dépannage
+- **Check that the server responds.** This should print a JSON line containing `"serverInfo"`:
 
-- **Vérifier que le serveur répond** :
   ```bash
   echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    | "/Applications/QuickScript.app/Contents/MacOS/QuickScript" --mcp-stdio
+    | /Applications/QuickScript.app/Contents/MacOS/QuickScript --mcp-stdio
   ```
-  doit renvoyer une ligne JSON contenant `"serverInfo"`.
-- **Valider le JSON de config** : `python3 -m json.tool < "$HOME/Library/Application Support/Claude/claude_desktop_config.json"`
-  (une virgule en trop bloque silencieusement tout le chargement).
-- **Logs côté client** : `~/Library/Logs/Claude/mcp.log`.
 
-## Pistes pour la suite
+- **Validate the Claude config.** A stray comma silently breaks loading:
 
-- Raccourcis clavier globaux par script
-- Icônes / emoji custom par entrée
-- Drag & drop pour réordonner
-- Mémorisation des dernières valeurs de paramètres
-- Variante PTY (pseudo-terminal) pour les scripts qui n'aiment pas tourner hors TTY
-# QuickScript
-# QuickScript
-# QuickScript
+  ```bash
+  python3 -m json.tool < "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+  ```
+
+- **Client logs**: `~/Library/Logs/Claude/mcp.log`
+- **Changes not taken into account after a rebuild**: run `./build.sh --install` again, then fully quit and relaunch both QuickScript and the MCP client.
+
+## Example scripts
+
+The `test-scripts/` folder contains small demos. Add them with **Add a script…**.
+
+| Script | Demonstrates |
+|--------|--------------|
+| `new-file.sh` | `@param` text fields (folder, name, content) |
+| `interactive-prompt.sh` | Runtime `stdin` prompts |
+| `error-demo.sh` | Error alert (exit code 1 with stdout/stderr) |
+| `silent-ok.sh` | Fully silent successful run |
+| `files-info.sh` | *Run with QuickScript…* on a file selection |
+| `flatten-folder.sh` | *Run with QuickScript here…*: moves all files from subfolders into the current folder |
+| `crop-images.sh`, `resize-images.sh` | Image processing (`sips`) on the Finder selection or a path parameter |
+| `hello.*` | One script per supported interpreter |
+
+## Contributing
+
+The code layout is described in [`architecture.md`](architecture.md). Development notes, conventions and known pitfalls are in [`CLAUDE.md`](CLAUDE.md). Issues and pull requests are welcome.
+
+## Roadmap ideas
+
+- Global keyboard shortcuts per script
+- Reordering scripts in the menu by drag and drop
+- Remembering the last values entered for each script
+- Search / filter when the menu gets long
+- *Clear* button in the logs window, *Retry* button in the error alert
+
+## License
+
+QuickScript is released under the [MIT License](LICENSE).

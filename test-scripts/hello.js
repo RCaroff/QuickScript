@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 //
-// Test Node.js — vérifie que QuickScript exécute correctement les scripts
-// .js / .mjs via node, transmet les @param en argv, et expose les variables
-// QS_CONTEXT_*.
+// Node.js test — checks that QuickScript correctly runs .js / .mjs
+// scripts via node, passes the @param values in argv, and exposes the
+// QS_CONTEXT_* variables.
 //
-// @param name=world  Prénom à saluer
+// @param name=world  Name to greet
 //
 const args = process.argv.slice(2);
 const name = args[0] || "world";

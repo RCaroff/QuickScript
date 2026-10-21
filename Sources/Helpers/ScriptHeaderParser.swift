@@ -61,14 +61,27 @@ enum ScriptHeaderParser {
             ? String(parts[1]).trimmingCharacters(in: .whitespaces)
             : nil
 
-        // Sépare NAME / DEFAULT
+        // Sépare NAME[:TYPE] / DEFAULT
+        var head = spec
+        var def: String? = nil
         if let eq = spec.firstIndex(of: "=") {
-            let name = String(spec[..<eq])
-            let def = String(spec[spec.index(after: eq)...])
-            guard !name.isEmpty else { return nil }
-            return ScriptParam(name: name, defaultValue: def, description: description)
-        } else {
-            return ScriptParam(name: spec, defaultValue: nil, description: description)
+            head = String(spec[..<eq])
+            def = String(spec[spec.index(after: eq)...])
         }
+
+        // Sépare NAME / TYPE. Un type inconnu est conservé comme partie du
+        // nom (rétrocompat : comportement d'avant l'introduction des types).
+        var name = head
+        var type: ParamType = .string
+        if let colon = head.firstIndex(of: ":") {
+            let candidateName = String(head[..<colon])
+            let candidateType = String(head[head.index(after: colon)...])
+            if !candidateName.isEmpty, let t = ParamType.parse(candidateType) {
+                name = candidateName
+                type = t
+            }
+        }
+        guard !name.isEmpty else { return nil }
+        return ScriptParam(name: name, defaultValue: def, description: description, type: type)
     }
 }

@@ -1,9 +1,10 @@
 #!/usr/bin/env ruby
 #
-# Test Ruby — vérifie que QuickScript exécute correctement les scripts
-# .rb, transmet les @param en argv, et expose les variables QS_CONTEXT_*.
+# Ruby test — checks that QuickScript correctly runs
+# .rb, passes the @param values in argv, and exposes the QS_CONTEXT_*
+# variables.
 #
-# @param name=world  Prénom à saluer
+# @param name=world  Name to greet
 #
 name = ARGV[0] || "world"
 

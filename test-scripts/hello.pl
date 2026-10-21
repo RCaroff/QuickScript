@@ -1,9 +1,10 @@
 #!/usr/bin/env perl
 #
-# Test Perl — vérifie que QuickScript exécute correctement les scripts
-# .pl, transmet les @param en argv, et expose les variables QS_CONTEXT_*.
+# Perl test — checks that QuickScript correctly runs
+# .pl, passes the @param values in argv, and exposes the QS_CONTEXT_*
+# variables.
 #
-# @param name=world  Prénom à saluer
+# @param name=world  Name to greet
 #
 use strict;
 use warnings;

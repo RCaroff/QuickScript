@@ -29,13 +29,19 @@ final class HeadlessMCPHost: MCPToolHost {
               !name.isEmpty else { return nil }
         let def = (dict["default"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let desc = (dict["description"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        return ScriptParam(name: name, defaultValue: def, description: desc)
+        return ScriptParam(name: name, defaultValue: def, description: desc,
+                           type: MCPCore.paramType(from: dict))
     }
 
     private func paramJSON(_ p: ScriptParam) -> [String: Any] {
         var d: [String: Any] = ["name": p.name]
         if let v = p.defaultValue { d["default"] = v }
         if let v = p.description { d["description"] = v }
+        switch p.type {
+        case .string: d["type"] = "string"
+        case .bool: d["type"] = "bool"
+        case .enumeration(let options): d["type"] = "enum"; d["options"] = options
+        }
         return d
     }
 
@@ -115,7 +121,7 @@ final class HeadlessMCPHost: MCPToolHost {
         let params = ScriptHeaderParser.parseParams(scriptPath: script.path)
         var args: [String] = []
         for p in params {
-            let value = values[p.name] ?? p.defaultValue ?? ""
+            let value = p.normalized(values[p.name])
             if p.name.hasPrefix("-") {
                 if !value.isEmpty { args.append(p.name); args.append(value) }
             } else {
@@ -174,5 +180,31 @@ final class HeadlessMCPHost: MCPToolHost {
             payload["note"] = "Le mode terminal n'est pas disponible en stdio headless ; le script a été exécuté en capturant la sortie."
         }
         return .ok(payload)
+    }
+
+    func mcpDeleteScript(target: String?, deleteFile: Bool) -> MCPToolOutcome {
+        ConfigStore.shared.load()
+        guard let script = resolveScript(target) else {
+            return .error("Script introuvable pour : \(target ?? "(vide)")")
+        }
+
+        var fileDeleted = false
+        if deleteFile, FileManager.default.fileExists(atPath: script.path) {
+            do {
+                try FileManager.default.removeItem(atPath: script.path)
+                fileDeleted = true
+            } catch {
+                return .error("Suppression du fichier impossible : \(error.localizedDescription)")
+            }
+        }
+
+        ConfigStore.shared.remove(id: script.id)
+
+        return .ok([
+            "ok": true,
+            "deleted": script.name,
+            "id": script.id.uuidString,
+            "fileDeleted": fileDeleted
+        ])
     }
 }

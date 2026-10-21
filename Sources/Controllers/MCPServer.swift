@@ -33,6 +33,7 @@ protocol MCPToolHost: AnyObject {
     func mcpAddScript(name: String?, content: String?, params: [[String: Any]]) -> MCPToolOutcome
     func mcpUpdateParams(target: String?, params: [[String: Any]]) -> MCPToolOutcome
     func mcpRunScript(target: String?, values: [String: String], inTerminal: Bool) -> MCPToolOutcome
+    func mcpDeleteScript(target: String?, deleteFile: Bool) -> MCPToolOutcome
 }
 
 // ============================================================================

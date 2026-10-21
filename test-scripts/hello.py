@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 #
-# Test Python — vérifie que QuickScript exécute correctement les scripts
-# .py via python3, transmet les @param en argv, et expose les variables
-# QS_CONTEXT_*.
+# Python test — checks that QuickScript correctly runs
+# .py via python3, passes the @param values in argv, and exposes the
+# QS_CONTEXT_* variables.
 #
-# @param name=world  Prénom à saluer
+# @param name=world  Name to greet
 #
 import os
 import sys

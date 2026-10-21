@@ -1,9 +1,10 @@
 #!/usr/bin/env zsh
 #
-# Test zsh — vérifie que QuickScript exécute correctement les scripts
-# .zsh, transmet les @param en argv, et expose les variables QS_CONTEXT_*.
+# zsh test — checks that QuickScript correctly runs
+# .zsh, passes the @param values in argv, and exposes the QS_CONTEXT_*
+# variables.
 #
-# @param name=world  Prénom à saluer
+# @param name=world  Name to greet
 #
 emulate -L zsh
 setopt err_exit no_unset pipe_fail

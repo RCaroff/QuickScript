@@ -1,14 +1,13 @@
 #!/usr/bin/env php
 <?php
 //
-// Test PHP — vérifie que QuickScript exécute correctement les scripts
-// .php via php, et expose les variables QS_CONTEXT_*.
+// PHP test — checks that QuickScript correctly runs .php scripts via php,
+// and exposes the QS_CONTEXT_* variables.
 //
-// ⚠ LIMITATION : ScriptHeaderParser s'arrête au premier `<?php` (ce n'est ni
-//   un commentaire `#`/`//` ni un shebang), donc les `@param` placés
-//   après `<?php` ne sont PAS détectés et aucun dialog QuickScript ne
-//   sera proposé pour ce script. Lance-le sans paramètres : le script se
-//   contente de saluer "world" par défaut.
+// ⚠ LIMITATION: ScriptHeaderParser stops at the first `<?php` (it is neither
+//   a `#`/`//` comment nor a shebang), so `@param` lines placed after
+//   `<?php` are NOT detected and QuickScript shows no dialog for this
+//   script. Run it without parameters: it simply greets "world".
 //
 $args = array_slice($argv, 1);
 $name = $args[0] ?? "world";
